@@ -4,21 +4,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  LayoutDashboard, Search, BarChart2, FileEdit,
+  Search, BarChart2, FileEdit,
   Link2, TrendingUp, Gauge, FolderOpen, Send, Newspaper,
-  LogOut, UserCircle, KeyRound, Loader2, X,
+  LogOut, UserCircle, KeyRound, Loader2, X, Sparkles,
 } from "lucide-react";
 
 const nav = [
-  { href: "/",          label: "ダッシュボード",       icon: LayoutDashboard, color: "var(--blue)" },
+  { href: "/",          label: "AIライティング",       icon: Sparkles,        color: "#34d399", hero: true },
+  { href: "/media",     label: "メディア",             icon: Newspaper,       color: "var(--cyan)" },
+  { href: "/analyst",   label: "アナリスト連携",       icon: Send,            color: "#34d399" },
   { href: "/keywords",  label: "キーワードリサーチ",   icon: Search,          color: "var(--cyan)" },
   { href: "/serp",      label: "SERP分析",             icon: BarChart2,       color: "var(--purple)" },
   { href: "/editor",    label: "コンテンツエディタ",   icon: FileEdit,        color: "#34d399" },
   { href: "/backlinks", label: "被リンク分析",         icon: Link2,           color: "#fb923c" },
   { href: "/tracker",   label: "順位トラッカー",       icon: TrendingUp,      color: "var(--blue)" },
   { href: "/audit",     label: "サイト監査",           icon: Gauge,           color: "#f472b6" },
-  { href: "/media",     label: "メディア運用",         icon: Newspaper,       color: "var(--cyan)" },
-  { href: "/analyst",   label: "アナリスト連携",       icon: Send,            color: "#34d399" },
   { href: "/projects",  label: "プロジェクト",         icon: FolderOpen,      color: "var(--purple)" },
 ];
 
