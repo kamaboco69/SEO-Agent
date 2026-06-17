@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard, Search, BarChart2, FileEdit,
   Link2, TrendingUp, Gauge, FolderOpen, Send, Newspaper,
-  LogOut, UserCircle, KeyRound, Loader2, X, ChevronDown,
+  LogOut, UserCircle, KeyRound, X,
 } from "lucide-react";
 
 const nav = [
@@ -25,43 +25,9 @@ const nav = [
 const DISMISS_KEY = "aicompany_connect_dismissed";
 
 function AiCompanyConnectBanner({ callbackUrl }: { callbackUrl: string }) {
-  const [open, setOpen] = useState(false);
-  const [aiId, setAiId] = useState("");
-  const [code, setCode] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const idRef = useRef<HTMLInputElement>(null);
-
   function dismiss() {
     localStorage.setItem(DISMISS_KEY, "1");
-    // Trigger re-render in parent by dispatching storage event
     window.dispatchEvent(new Event("storage"));
-  }
-
-  useEffect(() => {
-    if (open) idRef.current?.focus();
-  }, [open]);
-
-  async function connectWithId(e: React.FormEvent) {
-    e.preventDefault();
-    if (!aiId.trim() || !code.trim()) return;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch("/api/auth/connect/aicompany-id", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ aiCompanyId: aiId.trim(), verificationCode: code.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error ?? "接続に失敗しました");
-        return;
-      }
-      window.location.reload();
-    } finally {
-      setLoading(false);
-    }
   }
 
   return (
@@ -69,8 +35,7 @@ function AiCompanyConnectBanner({ callbackUrl }: { callbackUrl: string }) {
       className="mx-2 mb-2 rounded-xl overflow-hidden"
       style={{ border: "1px solid rgba(52,211,153,0.3)", background: "rgba(52,211,153,0.05)" }}
     >
-      {/* Header row */}
-      <div className="flex items-center gap-2 px-3 py-2">
+      <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
         <span
           className="w-1.5 h-1.5 rounded-full shrink-0"
           style={{ background: "#34d399", boxShadow: "0 0 6px #34d399", animation: "pulse-glow 2s ease-in-out infinite" }}
@@ -78,85 +43,28 @@ function AiCompanyConnectBanner({ callbackUrl }: { callbackUrl: string }) {
         <p className="text-[10px] font-bold flex-1 leading-tight" style={{ color: "#34d399" }}>
           AICompanyと接続
         </p>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="text-[10px] px-1.5 py-0.5 rounded transition-colors"
-          style={{ color: open ? "#34d399" : "rgba(52,211,153,0.6)" }}
-          title={open ? "閉じる" : "接続する"}
-        >
-          <ChevronDown
-            size={12}
-            style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
-          />
-        </button>
-        <button onClick={dismiss} style={{ color: "rgba(52,211,153,0.4)" }} title="閉じる">
+        <button onClick={dismiss} style={{ color: "rgba(52,211,153,0.4)" }} title="閉じない">
           <X size={11} />
         </button>
       </div>
 
-      {/* Expanded panel */}
-      {open && (
-        <div
-          className="px-3 pb-3 space-y-2"
-          style={{ borderTop: "1px solid rgba(52,211,153,0.12)" }}
+      <div className="px-3 pb-3 space-y-2">
+        <p className="text-[9px] leading-relaxed" style={{ color: "rgba(52,211,153,0.65)" }}>
+          同じアカウントでAICompanyの設定を自動反映できます
+        </p>
+        <a
+          href={`/api/auth/oauth/aicompany?mode=connect&callbackUrl=${encodeURIComponent(callbackUrl)}`}
+          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-bold transition-all"
+          style={{
+            background: "rgba(52,211,153,0.12)",
+            border: "1px solid rgba(52,211,153,0.3)",
+            color: "#34d399",
+          }}
         >
-          <p className="text-[9px] pt-2 leading-relaxed" style={{ color: "rgba(52,211,153,0.65)" }}>
-            同じアカウントでAICompanyの設定を自動反映できます
-          </p>
-
-          {/* OAuth button */}
-          <a
-            href={`/api/auth/oauth/aicompany?mode=connect&callbackUrl=${encodeURIComponent(callbackUrl)}`}
-            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-bold transition-all"
-            style={{
-              background: "rgba(52,211,153,0.12)",
-              border: "1px solid rgba(52,211,153,0.3)",
-              color: "#34d399",
-            }}
-          >
-            <KeyRound size={11} />
-            AICompany OAuthで接続
-          </a>
-
-          <div className="flex items-center gap-2">
-            <div className="flex-1 h-px" style={{ background: "rgba(52,211,153,0.12)" }} />
-            <span className="text-[9px]" style={{ color: "rgba(52,211,153,0.4)" }}>or</span>
-            <div className="flex-1 h-px" style={{ background: "rgba(52,211,153,0.12)" }} />
-          </div>
-
-          <form onSubmit={connectWithId} className="space-y-1.5">
-            <input
-              ref={idRef}
-              value={aiId}
-              onChange={(e) => setAiId(e.target.value)}
-              placeholder="AICompany ID"
-              className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]"
-            />
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="検証コード"
-              className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]"
-            />
-            {error && (
-              <p className="text-[9px]" style={{ color: "#f87171" }}>{error}</p>
-            )}
-            <button
-              type="submit"
-              disabled={loading || !aiId.trim() || !code.trim()}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40 transition-all"
-              style={{
-                background: "rgba(52,211,153,0.12)",
-                border: "1px solid rgba(52,211,153,0.3)",
-                color: "#34d399",
-              }}
-            >
-              {loading ? <Loader2 size={10} className="animate-spin" /> : <KeyRound size={10} />}
-              IDで接続
-            </button>
-          </form>
-        </div>
-      )}
+          <KeyRound size={11} />
+          AICompany OAuthでログイン
+        </a>
+      </div>
     </div>
   );
 }
