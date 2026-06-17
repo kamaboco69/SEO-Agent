@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  domain      String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  keywords    TrackedKeyword[]
+  articles    Article[]
+  handoffs    AnalystHandoff[]
+  media       Media[]
+}
+
+model AuthUser {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  image     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts  AuthAccount[]
+  sessions  AuthSession[]
+  aiCompany AiCompanyProfile?
+}
+
+model AuthAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  user              AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String
+  providerAccountId String
+  email             String?
+  accessToken       String?
+  refreshToken      String?
+  expiresAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+}
+
+model AuthSession {
+  id           String   @id @default(cuid())
+  userId       String
+  user         AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionToken String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+}
+
+model AiCompanyProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              AuthUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  aiCompanyId       String   @unique
+  displayName       String?
+  email             String?
+  defaultDomain     String?
+  defaultProjectName String?
+  defaultObjective  String?
+  defaultContext    String?
+  settings          Json     @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model TrackedKeyword {
+  id         String   @id @default(cuid())
+  keyword    String
+  targetUrl  String?
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  rankings   KeywordRanking[]
+}
+
+model KeywordRanking {
+  id         String         @id @default(cuid())
+  keywordId  String
+  keyword    TrackedKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  position   Int
+  url        String?
+  checkedAt  DateTime       @default(now())
+}
+
+model Article {
+  id           String   @id @default(cuid())
+  title        String
+  content      String   @default("")
+  targetKw     String?
+  metaTitle    String?
+  metaDesc     String?
+  seoScore     Int?
+  wordCount    Int?
+  projectId    String?
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AnalystHandoff {
+  id             String   @id @default(cuid())
+  projectId      String?
+  project        Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title          String
+  objective      String
+  targetDomain   String?
+  status         String   @default("draft")
+  priority       String   @default("normal")
+  payload        Json
+  analystNotes   String?
+  recommendation String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Media {
+  id                String   @id @default(cuid())
+  projectId         String?
+  project           Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name              String
+  domain            String
+  description       String?
+  audience          String?
+  tone              String?
+  mainCategories    Json     @default("[]")
+  aiCompanyMediaId  String?
+  syncStatus        String   @default("pending")
+  syncMessage       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workflows         ContentWorkflow[]
+}
+
+model ContentWorkflow {
+  id                String   @id @default(cuid())
+  mediaId           String
+  media             Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  instruction       String
+  targetTheme       String?
+  status            String   @default("draft")
+  currentStep       String   @default("media_analysis")
+  automationMode    String   @default("approval_required")
+  finalArticleTitle String?
+  finalArticle      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  steps             WorkflowStep[]
+}
+
+model WorkflowStep {
+  id             String          @id @default(cuid())
+  workflowId     String
+  workflow       ContentWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  key            String
+  label          String
+  status         String          @default("pending")
+  input          Json            @default("{}")
+  output         Json            @default("{}")
+  revisionNote   String?
+  approvedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@unique([workflowId, key])
+}
