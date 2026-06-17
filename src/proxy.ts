@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionCookieName } from "@/lib/authConstants";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/"];
+const PUBLIC_PATHS = ["/login", "/api/auth/", "/api/analyst/recommendations"];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   const isPublic =
     PUBLIC_PATHS.some((p) => pathname.startsWith(p)) ||
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon");
+    pathname === "/favicon.ico";
 
   if (isPublic) return NextResponse.next();
 
@@ -17,7 +17,7 @@ export function middleware(req: NextRequest) {
   if (!session?.value) {
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("callbackUrl", pathname);
+    loginUrl.searchParams.set("callbackUrl", `${pathname}${req.nextUrl.search}`);
     return NextResponse.redirect(loginUrl);
   }
 

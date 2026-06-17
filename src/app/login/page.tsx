@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { KeyRound, Loader2, LockKeyhole, Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -23,7 +23,7 @@ function GitHubIcon() {
   );
 }
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
@@ -128,5 +128,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div style={{ background: "var(--bg)", minHeight: "100vh" }} />}>
+      <LoginContent />
+    </Suspense>
   );
 }
