@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
-import { KeyRound, Loader2, LockKeyhole, Search } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+import { LockKeyhole, Search } from "lucide-react";
+import { useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 
 function GoogleIcon() {
   return (
@@ -24,39 +25,10 @@ function GitHubIcon() {
 }
 
 function LoginContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
   const error = searchParams.get("error");
-  const [aiCompanyId, setAiCompanyId] = useState("");
-  const [verificationCode, setVerificationCode] = useState("");
-  const [loading, setLoading] = useState(false);
   const oauthCallback = useMemo(() => encodeURIComponent(callbackUrl), [callbackUrl]);
-
-  async function loginWithAICompanyId(e: React.FormEvent) {
-    e.preventDefault();
-    if (!aiCompanyId.trim() || !verificationCode.trim()) return;
-    setLoading(true);
-    try {
-      const res = await fetch("/api/auth/ai-company-id", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          aiCompanyId: aiCompanyId.trim(),
-          verificationCode: verificationCode.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error ?? "AICompany IDログインに失敗しました");
-        return;
-      }
-      router.push(callbackUrl);
-      router.refresh();
-    } finally {
-      setLoading(false);
-    }
-  }
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center px-6" style={{ background: "var(--bg)" }}>
@@ -79,8 +51,8 @@ function LoginContent() {
             AICompanyと同じアカウントで<br />SEO運用を接続
           </h1>
           <p className="text-sm leading-7 max-w-xl" style={{ color: "var(--text-muted)" }}>
-            Google、GitHub、AICompanyのログインを同じメールアドレスで自動リンクします。
-            AICompany側に登録済みのメディアやアナリスト設定は、連携画面で初期値として使われます。
+            Google または GitHub でログインすると、同じメールアドレスのAICompanyアカウントを
+            自動で照合し、登録済みのメディアやアナリスト設定を連携画面の初期値として取り込みます。
           </p>
         </div>
 
@@ -105,26 +77,11 @@ function LoginContent() {
               <GitHubIcon />
               GitHubでログイン
             </a>
-            <a href={`/api/auth/oauth/aicompany?callbackUrl=${oauthCallback}`} className="cyber-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold">
-              <KeyRound size={14} />
-              AICompany OAuthでログイン
-            </a>
           </div>
 
-          <div className="my-4 h-px" style={{ background: "rgba(56,189,248,0.12)" }} />
-
-          <form onSubmit={loginWithAICompanyId} className="space-y-3">
-            <p className="text-[10px] font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>AICompany ID</p>
-            <input value={aiCompanyId} onChange={(e) => setAiCompanyId(e.target.value)} placeholder="AICompany ID" className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
-            <input value={verificationCode} onChange={(e) => setVerificationCode(e.target.value)} placeholder="検証コード" className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
-            <button type="submit" disabled={loading || !aiCompanyId.trim() || !verificationCode.trim()} className="cyber-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold disabled:opacity-40">
-              {loading ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />}
-              AICompany IDでログイン
-            </button>
-            <p className="text-[10px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              AICompany IDログインはAICompany側の検証APIで確認後に有効になります。
-            </p>
-          </form>
+          <p className="mt-4 text-[10px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+            ログイン後、同じメールアドレスのAICompany設定が自動で連携されます。
+          </p>
         </div>
       </div>
     </div>
