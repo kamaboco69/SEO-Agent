@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, syncAiCompanyProfileByEmail } from "@/lib/auth";
+import { enableAiCompanyLink, getCurrentUser, syncAiCompanyProfileByEmail } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,8 @@ export async function POST() {
     return NextResponse.json({ ok: false, error: "AICompany連携が未設定です" }, { status: 503 });
   }
 
+  // 解除フラグを戻してから再連携
+  await enableAiCompanyLink(user.id);
   const linked = await syncAiCompanyProfileByEmail(user.id, user.email);
   if (!linked) {
     return NextResponse.json(

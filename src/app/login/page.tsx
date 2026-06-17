@@ -1,9 +1,8 @@
 "use client";
 
-import { Suspense } from "react";
-import { LockKeyhole, Search } from "lucide-react";
-import { useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
+import { LockKeyhole, Search, Loader2, Mail } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 function GoogleIcon() {
   return (
@@ -25,10 +24,41 @@ function GitHubIcon() {
 }
 
 function LoginContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/";
-  const error = searchParams.get("error");
+  const urlError = searchParams.get("error");
   const oauthCallback = useMemo(() => encodeURIComponent(callbackUrl), [callbackUrl]);
+
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(mode === "login" ? "/api/auth/login" : "/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, name: name.trim() || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setError(data.error ?? (mode === "login" ? "ログインに失敗しました" : "登録に失敗しました"));
+        return;
+      }
+      router.push(callbackUrl);
+      router.refresh();
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center px-6" style={{ background: "var(--bg)" }}>
@@ -51,7 +81,7 @@ function LoginContent() {
             AICompanyと同じアカウントで<br />SEO運用を接続
           </h1>
           <p className="text-sm leading-7 max-w-xl" style={{ color: "var(--text-muted)" }}>
-            Google または GitHub でログインすると、同じメールアドレスのAICompanyアカウントを
+            Google・GitHub・メールアドレスでログインできます。同じメールアドレスのAICompanyアカウントを
             自動で照合し、登録済みのメディアやアナリスト設定を連携画面の初期値として取り込みます。
           </p>
         </div>
@@ -59,28 +89,55 @@ function LoginContent() {
         <div className="glass-static rounded-xl p-5">
           <div className="flex items-center gap-2 mb-4">
             <LockKeyhole size={15} style={{ color: "var(--cyan)" }} />
-            <p className="text-sm font-bold" style={{ color: "var(--text)" }}>ログイン</p>
+            <p className="text-sm font-bold" style={{ color: "var(--text)" }}>{mode === "login" ? "ログイン" : "新規登録"}</p>
           </div>
 
-          {error && (
+          {urlError && (
             <div className="mb-4 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.22)", color: "#f87171" }}>
-              {decodeURIComponent(error)}
+              {decodeURIComponent(urlError)}
             </div>
           )}
 
           <div className="space-y-2">
             <a href={`/api/auth/oauth/google?callbackUrl=${oauthCallback}`} className="cyber-btn w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold">
               <GoogleIcon />
-              Googleでログイン
+              Googleで{mode === "login" ? "ログイン" : "登録"}
             </a>
             <a href={`/api/auth/oauth/github?callbackUrl=${oauthCallback}`} className="cyber-btn w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold">
               <GitHubIcon />
-              GitHubでログイン
+              GitHubで{mode === "login" ? "ログイン" : "登録"}
             </a>
           </div>
 
-          <p className="mt-4 text-[10px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-            ログイン後、同じメールアドレスのAICompany設定が自動で連携されます。
+          <div className="my-4 flex items-center gap-2">
+            <div className="flex-1 h-px" style={{ background: "rgba(56,189,248,0.12)" }} />
+            <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>または メールアドレス</span>
+            <div className="flex-1 h-px" style={{ background: "rgba(56,189,248,0.12)" }} />
+          </div>
+
+          {error && (
+            <div className="mb-3 px-3 py-2 rounded-lg text-xs" style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.22)", color: "#f87171" }}>
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={submit} className="space-y-2.5">
+            {mode === "signup" && (
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="お名前（任意）" className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
+            )}
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="メールアドレス" autoComplete="email" className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={mode === "signup" ? "パスワード（8文字以上）" : "パスワード"} autoComplete={mode === "login" ? "current-password" : "new-password"} className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
+            <button type="submit" disabled={loading || !email.trim() || !password} className="cyber-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold disabled:opacity-40">
+              {loading ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+              {mode === "login" ? "メールでログイン" : "メールで新規登録"}
+            </button>
+          </form>
+
+          <p className="mt-4 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {mode === "login" ? "アカウントをお持ちでない方は" : "すでにアカウントをお持ちの方は"}
+            <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }} className="ml-1 font-bold" style={{ color: "var(--cyan)" }}>
+              {mode === "login" ? "新規登録" : "ログイン"}
+            </button>
           </p>
         </div>
       </div>

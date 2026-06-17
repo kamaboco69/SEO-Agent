@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { sessionCookieName } from "@/lib/authConstants";
@@ -219,6 +220,11 @@ export async function connectIdentityToUser(userId: string, identity: AuthIdenti
 export async function syncAiCompanyProfileByEmail(userId: string, rawEmail: string): Promise<boolean> {
   const url = process.env.AI_COMPANY_PROFILE_URL;
   if (!url) return false;
+
+  // ユーザーが連携解除済みなら自動再連携しない
+  const u = await prisma.authUser.findUnique({ where: { id: userId }, select: { aiCompanyLinkDisabled: true } });
+  if (u?.aiCompanyLinkDisabled) return false;
+
   const email = normalizeEmail(rawEmail);
   const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
 
@@ -284,6 +290,41 @@ export async function getAiCompanyEntitlement(userId: string, email: string): Pr
     planName: settings.planName ?? null,
     billingUrl: settings.billingUrl ?? null,
   };
+}
+
+// ── メール/パスワード認証 ──
+export async function createUserWithPassword(rawEmail: string, password: string, name?: string | null) {
+  const email = normalizeEmail(rawEmail);
+  const existing = await prisma.authUser.findUnique({ where: { email } });
+  if (existing?.passwordHash) {
+    throw new Error("このメールアドレスは既に登録されています");
+  }
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  // 既存ユーザー（OAuthのみ）にパスワードを後付け、なければ新規作成
+  const user = existing
+    ? await prisma.authUser.update({ where: { id: existing.id }, data: { passwordHash, name: name ?? existing.name } })
+    : await prisma.authUser.create({ data: { email, passwordHash, name: name ?? null } });
+  return user;
+}
+
+export async function verifyPassword(rawEmail: string, password: string) {
+  const email = normalizeEmail(rawEmail);
+  const user = await prisma.authUser.findUnique({ where: { email } });
+  if (!user?.passwordHash) return null;
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  return ok ? user : null;
+}
+
+// ── AICompany 連携解除 / 再連携 ──
+export async function disconnectAiCompany(userId: string) {
+  await prisma.authUser.update({ where: { id: userId }, data: { aiCompanyLinkDisabled: true } });
+  await prisma.authAccount.deleteMany({ where: { userId, provider: "aicompany" } });
+  await prisma.aiCompanyProfile.deleteMany({ where: { userId } });
+}
+
+export async function enableAiCompanyLink(userId: string) {
+  await prisma.authUser.update({ where: { id: userId }, data: { aiCompanyLinkDisabled: false } });
 }
 
 export async function destroyCurrentSession() {

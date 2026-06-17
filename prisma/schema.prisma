@@ -21,12 +21,14 @@ model Project {
 }
 
 model AuthUser {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  image     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  name                  String?
+  image                 String?
+  passwordHash          String?
+  aiCompanyLinkDisabled Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
   accounts  AuthAccount[]
   sessions  AuthSession[]

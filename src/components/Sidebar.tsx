@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import {
   Search, BarChart2, FileEdit,
   Link2, TrendingUp, Gauge, FolderOpen, Send, Newspaper,
-  LogOut, UserCircle, KeyRound, Loader2, X, Sparkles,
+  LogOut, UserCircle, KeyRound, Loader2, X, Sparkles, Unlink,
 } from "lucide-react";
 
 const nav = [
@@ -138,6 +138,17 @@ export function Sidebar() {
     window.location.href = "/login";
   }
 
+  async function disconnectAiCompany() {
+    if (!confirm("AICompanyとの連携を解除しますか？\n（以後は自動で再連携されません。再連携はバナーから行えます）")) return;
+    const res = await fetch("/api/auth/disconnect/aicompany", { method: "POST" });
+    if (res.ok) {
+      localStorage.removeItem(DISMISS_KEY);
+      window.location.reload();
+    } else {
+      alert("連携解除に失敗しました");
+    }
+  }
+
   return (
     <>
       {/* Desktop sidebar */}
@@ -224,15 +235,23 @@ export function Sidebar() {
           style={{ borderTop: "1px solid rgba(56,189,248,0.08)" }}
         >
           {user ? (
-            <div className="flex items-center gap-2">
-              <UserCircle size={16} style={{ color: "var(--blue)" }} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-semibold truncate" style={{ color: "var(--text)" }}>{user.name ?? user.email}</p>
-                <p className="text-[9px] truncate" style={{ color: "var(--text-muted)" }}>{user.providers.join(" / ") || user.email}</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <UserCircle size={16} style={{ color: "var(--blue)" }} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold truncate" style={{ color: "var(--text)" }}>{user.name ?? user.email}</p>
+                  <p className="text-[9px] truncate" style={{ color: "var(--text-muted)" }}>{user.providers.join(" / ") || user.email}</p>
+                </div>
+                <button onClick={logout} className="shrink-0 transition-colors" style={{ color: "var(--text-muted)" }} title="ログアウト">
+                  <LogOut size={13} />
+                </button>
               </div>
-              <button onClick={logout} className="shrink-0 transition-colors" style={{ color: "var(--text-muted)" }} title="ログアウト">
-                <LogOut size={13} />
-              </button>
+              {user.providers.includes("aicompany") && (
+                <button onClick={disconnectAiCompany} className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[9px] font-bold transition-colors"
+                  style={{ background: "transparent", border: "1px solid rgba(248,113,113,0.25)", color: "rgba(248,113,113,0.85)" }} title="AICompany連携を解除">
+                  <Unlink size={10} /> AICompany連携を解除
+                </button>
+              )}
             </div>
           ) : (
             <Link href="/login" className="cyber-btn w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-[10px] font-bold">
