@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Inbox,
   Loader2,
+  Newspaper,
   RefreshCw,
   Send,
 } from "lucide-react";
@@ -35,6 +36,12 @@ interface AnalystHandoff {
   project: { id: string; name: string; domain: string | null } | null;
 }
 
+interface AiCompanyMedia {
+  name: string;
+  url: string;
+  description?: string | null;
+}
+
 interface AiCompanyProfile {
   email: string;
   name: string | null;
@@ -46,7 +53,16 @@ interface AiCompanyProfile {
     defaultProjectName: string | null;
     defaultObjective: string | null;
     defaultContext: string | null;
+    settings?: { media?: AiCompanyMedia[] } | null;
   } | null;
+}
+
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 const deliverables = [
@@ -83,6 +99,7 @@ export default function AnalystPage() {
 
   const selected = handoffs.find((handoff) => handoff.id === selectedId) ?? handoffs[0] ?? null;
   const payloadText = useMemo(() => (selected ? JSON.stringify(selected.payload, null, 2) : ""), [selected]);
+  const media = aiProfile?.aiCompany?.settings?.media ?? [];
 
   async function load() {
     setLoading(true);
@@ -244,6 +261,42 @@ export default function AnalystPage() {
               AICompany用パッケージ生成
             </button>
           </form>
+
+          {aiProfile?.aiCompany && (
+            <div className="glass-static rounded-xl p-4 shrink-0">
+              <div className="flex items-center gap-2 mb-2">
+                <Newspaper size={13} style={{ color: "var(--cyan)" }} />
+                <p className="text-xs font-bold" style={{ color: "var(--text)" }}>AICompanyメディア</p>
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ background: "rgba(56,189,248,0.1)", color: "var(--cyan)" }}>
+                  {media.length}
+                </span>
+              </div>
+              {media.length === 0 ? (
+                <p className="text-[10px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                  AICompany側にメディアが登録されていません。AICompanyでメディアを登録すると、ここに自動表示されます。
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {media.map((m, i) => (
+                    <button
+                      key={`${m.url}-${i}`}
+                      type="button"
+                      onClick={() => setTargetDomain(hostFromUrl(m.url))}
+                      title="クリックでTARGET DOMAINに設定"
+                      className="w-full text-left rounded-lg px-2.5 py-2 transition-colors"
+                      style={{ background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.14)" }}
+                    >
+                      <p className="text-[11px] font-semibold truncate" style={{ color: "var(--text)" }}>{m.name}</p>
+                      <p className="text-[9px] truncate" style={{ color: "var(--cyan)" }}>{m.url}</p>
+                      {m.description && (
+                        <p className="text-[9px] mt-0.5 line-clamp-2" style={{ color: "var(--text-muted)" }}>{m.description}</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="glass-static rounded-xl overflow-hidden flex-1 min-h-0">
             <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
