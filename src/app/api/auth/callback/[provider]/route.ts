@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { connectIdentityToUser, createSession, getCurrentUser, sessionCookieName, upsertUserFromIdentity } from "@/lib/auth";
+import { connectIdentityToUser, createSession, getCurrentUser, sessionCookieName, syncAiCompanyProfileByEmail, upsertUserFromIdentity } from "@/lib/auth";
 import { isOAuthProvider, normalizeProfile, providerConfig } from "@/lib/oauth";
 
 type Params = { params: Promise<{ provider: string }> };
@@ -104,6 +104,12 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
 
     const user = await upsertUserFromIdentity(identity);
+
+    // Google/GitHubログイン時は、同一メールのAICompanyユーザー設定を自動連携する。
+    if (provider !== "aicompany") {
+      await syncAiCompanyProfileByEmail(user.id, identity.email);
+    }
+
     const session = await createSession(user.id);
 
     const res = NextResponse.redirect(new URL(callbackUrl, req.url));

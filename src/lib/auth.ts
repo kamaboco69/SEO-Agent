@@ -213,6 +213,53 @@ export async function connectIdentityToUser(userId: string, identity: AuthIdenti
   }
 }
 
+// Google/GitHub等でログインした検証済みemailを使い、AICompany側の
+// 同一メールユーザーの設定をサーバー間で取得して自動連携する。
+// AICompany未登録・未設定・到達不可の場合はfalseを返すだけでログインは妨げない。
+export async function syncAiCompanyProfileByEmail(userId: string, rawEmail: string): Promise<boolean> {
+  const url = process.env.AI_COMPANY_PROFILE_URL;
+  if (!url) return false;
+  const email = normalizeEmail(rawEmail);
+  const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(secret ? { "x-ai-company-secret": secret } : {}),
+      },
+      body: JSON.stringify({ email, source: "seo-agent" }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => null) as
+      | { ok?: boolean; found?: boolean; aiCompanyId?: string; email?: string; name?: string | null; image?: string | null; displayName?: string | null; defaultDomain?: string | null; defaultProjectName?: string | null; defaultObjective?: string | null; defaultContext?: string | null; settings?: Record<string, unknown> }
+      | null;
+
+    if (!data?.ok || !data.found || !data.aiCompanyId) return false;
+
+    await connectIdentityToUser(userId, {
+      provider: "aicompany",
+      providerAccountId: String(data.aiCompanyId),
+      email: data.email ?? email,
+      name: data.name ?? null,
+      image: data.image ?? null,
+      aiCompany: {
+        aiCompanyId: String(data.aiCompanyId),
+        displayName: data.displayName ?? data.name ?? null,
+        defaultDomain: data.defaultDomain ?? null,
+        defaultProjectName: data.defaultProjectName ?? null,
+        defaultObjective: data.defaultObjective ?? null,
+        defaultContext: data.defaultContext ?? null,
+        settings: data.settings ?? {},
+      },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function destroyCurrentSession() {
   const store = await cookies();
   const rawToken = store.get(sessionCookieName)?.value;

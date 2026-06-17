@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutDashboard, Search, BarChart2, FileEdit,
   Link2, TrendingUp, Gauge, FolderOpen, Send, Newspaper,
-  LogOut, UserCircle, KeyRound, X,
+  LogOut, UserCircle, KeyRound, Loader2, X,
 } from "lucide-react";
 
 const nav = [
@@ -24,10 +24,31 @@ const nav = [
 
 const DISMISS_KEY = "aicompany_connect_dismissed";
 
-function AiCompanyConnectBanner({ callbackUrl }: { callbackUrl: string }) {
+function AiCompanyConnectBanner() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
   function dismiss() {
     localStorage.setItem(DISMISS_KEY, "1");
     window.dispatchEvent(new Event("storage"));
+  }
+
+  async function connect() {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/connect/aicompany-sync", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setError(data.error ?? "連携に失敗しました");
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setError("連携に失敗しました");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -41,29 +62,33 @@ function AiCompanyConnectBanner({ callbackUrl }: { callbackUrl: string }) {
           style={{ background: "#34d399", boxShadow: "0 0 6px #34d399", animation: "pulse-glow 2s ease-in-out infinite" }}
         />
         <p className="text-[10px] font-bold flex-1 leading-tight" style={{ color: "#34d399" }}>
-          AICompanyと接続
+          AICompanyと連携
         </p>
-        <button onClick={dismiss} style={{ color: "rgba(52,211,153,0.4)" }} title="閉じない">
+        <button onClick={dismiss} style={{ color: "rgba(52,211,153,0.4)" }} title="閉じる">
           <X size={11} />
         </button>
       </div>
 
       <div className="px-3 pb-3 space-y-2">
         <p className="text-[9px] leading-relaxed" style={{ color: "rgba(52,211,153,0.65)" }}>
-          同じアカウントでAICompanyの設定を自動反映できます
+          同じメールアドレスのAICompany設定を自動で取り込みます
         </p>
-        <a
-          href={`/api/auth/oauth/aicompany?mode=connect&callbackUrl=${encodeURIComponent(callbackUrl)}`}
-          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-bold transition-all"
+        {error && (
+          <p className="text-[9px] leading-relaxed" style={{ color: "#f87171" }}>{error}</p>
+        )}
+        <button
+          onClick={connect}
+          disabled={loading}
+          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-bold transition-all disabled:opacity-40"
           style={{
             background: "rgba(52,211,153,0.12)",
             border: "1px solid rgba(52,211,153,0.3)",
             color: "#34d399",
           }}
         >
-          <KeyRound size={11} />
-          AICompany OAuthでログイン
-        </a>
+          {loading ? <Loader2 size={11} className="animate-spin" /> : <KeyRound size={11} />}
+          AIComp.と連携する
+        </button>
       </div>
     </div>
   );
@@ -190,7 +215,7 @@ export function Sidebar() {
 
         {/* AICompany connect banner */}
         {showConnect && user && (
-          <AiCompanyConnectBanner callbackUrl={pathname} />
+          <AiCompanyConnectBanner />
         )}
 
         {/* Account */}
