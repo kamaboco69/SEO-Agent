@@ -260,6 +260,32 @@ export async function syncAiCompanyProfileByEmail(userId: string, rawEmail: stri
   }
 }
 
+export interface Entitlement {
+  found: boolean;     // AICompanyアカウントに連携できたか
+  entitled: boolean;  // 有料プラン且つアクティブか
+  planName: string | null;
+  billingUrl: string | null;
+}
+
+// 現在ユーザーのAICompany契約状態を最新同期して返す。
+export async function getAiCompanyEntitlement(userId: string, email: string): Promise<Entitlement> {
+  if (process.env.AI_COMPANY_PROFILE_URL) {
+    await syncAiCompanyProfileByEmail(userId, email);
+  }
+  const profile = await prisma.aiCompanyProfile.findUnique({ where: { userId } });
+  const settings = (profile?.settings ?? {}) as {
+    entitled?: boolean;
+    planName?: string | null;
+    billingUrl?: string | null;
+  };
+  return {
+    found: Boolean(profile),
+    entitled: Boolean(settings.entitled),
+    planName: settings.planName ?? null,
+    billingUrl: settings.billingUrl ?? null,
+  };
+}
+
 export async function destroyCurrentSession() {
   const store = await cookies();
   const rawToken = store.get(sessionCookieName)?.value;

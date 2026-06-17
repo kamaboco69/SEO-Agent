@@ -4,8 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
-  Globe, ChevronDown,
+  Globe, ChevronDown, Lock, Crown, ExternalLink,
 } from "lucide-react";
+
+interface Entitlement {
+  found: boolean;
+  entitled: boolean;
+  planName: string | null;
+  billingUrl: string | null;
+}
 
 interface MediaItem {
   id: string;
@@ -72,6 +79,8 @@ export default function PipelinePage() {
   const [newName, setNewName] = useState("");
   const [newDomain, setNewDomain] = useState("");
   const [copied, setCopied] = useState(false);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const [entLoading, setEntLoading] = useState(true);
 
   const loadMedia = useCallback(async () => {
     const res = await fetch("/api/media");
@@ -90,6 +99,23 @@ export default function PipelinePage() {
 
   useEffect(() => { loadMedia(); }, [loadMedia]);
   useEffect(() => { loadHistory(selectedMediaId); }, [selectedMediaId, loadHistory]);
+  useEffect(() => {
+    fetch("/api/ai-company/entitlement")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setEntitlement(d))
+      .catch(() => setEntitlement(null))
+      .finally(() => setEntLoading(false));
+  }, []);
+
+  async function recheckEntitlement() {
+    setEntLoading(true);
+    try {
+      const r = await fetch("/api/ai-company/entitlement");
+      if (r.ok) setEntitlement(await r.json());
+    } finally {
+      setEntLoading(false);
+    }
+  }
 
   async function syncMedia() {
     setSyncing(true);
@@ -138,7 +164,11 @@ export default function PipelinePage() {
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        alert(e.error ?? "開始に失敗しました");
+        if (res.status === 403) {
+          setEntitlement({ found: Boolean(e.found), entitled: false, planName: null, billingUrl: e.billingUrl ?? null });
+        } else {
+          alert(e.error ?? "開始に失敗しました");
+        }
         return;
       }
       let wf = (await res.json()) as Workflow;
@@ -290,15 +320,45 @@ export default function PipelinePage() {
               <label className="block text-[10px] font-bold mb-1.5" style={{ color: "var(--text-muted)" }}>指示（任意）</label>
               <textarea value={instruction} onChange={(e) => setInstruction(e.target.value)} rows={2} placeholder="例: CV導線に近い比較記事を優先したい" className="cyber-input w-full px-3 py-2 rounded-lg text-sm resize-none" />
             </div>
-            <button onClick={runPipeline} disabled={!selectedMediaId || running}
-              className="cyber-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold disabled:opacity-40">
-              {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              {running ? "実行中…" : "一気通貫で実行"}
-            </button>
-            {selectedMedia && (
-              <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                {selectedMedia.name}（{selectedMedia.domain}）を分析し、不足記事の特定→KW/競合調査→構成→執筆まで自動実行します。
-              </p>
+            {entitlement && !entitlement.entitled ? (
+              <div className="rounded-lg p-3 space-y-2" style={{ background: "rgba(250,204,21,0.06)", border: "1px solid rgba(250,204,21,0.3)" }}>
+                <div className="flex items-center gap-1.5">
+                  <Lock size={12} style={{ color: "#facc15" }} />
+                  <p className="text-[11px] font-bold" style={{ color: "#facc15" }}>有料プラン限定機能</p>
+                </div>
+                <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                  {entitlement.found
+                    ? "一気通貫の自動生成はAICompanyの有料プラン契約者のみご利用いただけます。"
+                    : "ご利用にはAICompanyアカウントとの連携＋有料プラン契約が必要です。"}
+                </p>
+                {entitlement.billingUrl ? (
+                  <a href={entitlement.billingUrl} target="_blank" rel="noopener noreferrer"
+                    className="cyber-btn-primary w-full flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg text-xs font-bold">
+                    <Crown size={13} /> AICompanyを有効にする <ExternalLink size={11} />
+                  </a>
+                ) : (
+                  <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>AICompanyの課金画面から契約してください。</p>
+                )}
+                <button onClick={recheckEntitlement} disabled={entLoading}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40"
+                  style={{ background: "transparent", border: "1px solid rgba(250,204,21,0.3)", color: "#facc15" }}>
+                  {entLoading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                  契約後にこちらを再確認
+                </button>
+              </div>
+            ) : (
+              <>
+                <button onClick={runPipeline} disabled={!selectedMediaId || running || entLoading}
+                  className="cyber-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold disabled:opacity-40">
+                  {running || entLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                  {running ? "実行中…" : entLoading ? "確認中…" : "一気通貫で実行"}
+                </button>
+                {selectedMedia && (
+                  <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    {selectedMedia.name}（{selectedMedia.domain}）を分析し、不足記事の特定→KW/競合調査→構成→執筆まで自動実行します。
+                  </p>
+                )}
+              </>
             )}
           </div>
 

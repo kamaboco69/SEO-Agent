@@ -3,9 +3,35 @@ import type { WorkflowStep } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { workflowSteps, type WorkflowStepKey } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
+import { getAiCompanyEntitlement, getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+// 一気通貫はAICompany有料契約者限定。未契約なら 403 + 課金導線を返す。
+async function guardEntitlement() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return { res: NextResponse.json({ error: "ログインが必要です", entitled: false }, { status: 401 }) };
+  }
+  const ent = await getAiCompanyEntitlement(user.id, user.email);
+  if (!ent.entitled) {
+    return {
+      res: NextResponse.json(
+        {
+          error: ent.found
+            ? "この機能はAICompanyの有料プラン契約者のみ利用できます"
+            : "AICompanyアカウントとの連携が必要です",
+          entitled: false,
+          found: ent.found,
+          billingUrl: ent.billingUrl,
+        },
+        { status: 403 }
+      ),
+    };
+  }
+  return { user };
+}
 
 function includeWorkflow() {
   return {
@@ -39,6 +65,9 @@ export async function GET(req: NextRequest) {
 
 // POST: パイプライン開始（ワークフロー作成 + step1=メディア分析をAI実行）
 export async function POST(req: NextRequest) {
+  const guard = await guardEntitlement();
+  if (guard.res) return guard.res;
+
   const body = await req.json();
   const mediaId = String(body.mediaId ?? "").trim();
   const instruction = String(body.instruction ?? "").trim() || "このメディアの検索流入を伸ばす記事を作る";
@@ -82,6 +111,9 @@ export async function POST(req: NextRequest) {
 
 // PATCH: 次ステップをAI実行して前進 / 特定ステップの修正再実行
 export async function PATCH(req: NextRequest) {
+  const guard = await guardEntitlement();
+  if (guard.res) return guard.res;
+
   const body = await req.json();
   const workflowId = String(body.workflowId ?? "").trim();
   const action = String(body.action ?? "run_next").trim();

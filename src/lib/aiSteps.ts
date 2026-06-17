@@ -5,8 +5,8 @@ import { generateStepOutput, type WorkflowStepKey } from "@/lib/contentWorkflow"
 // 一気通貫パイプラインの各ステップを「本物のAI」で実行する。
 // ANTHROPIC_API_KEY 未設定時は contentWorkflow.ts のテンプレ生成にフォールバックする。
 
-const HEAVY_MODEL = "claude-opus-4-8"; // 記事執筆・メディア分析など品質重視
-const FAST_MODEL = "claude-sonnet-4-6"; // KW/競合などの調査系
+const WRITING_MODEL = "claude-sonnet-4-6"; // 記事執筆
+const RESEARCH_MODEL = "claude-haiku-4-5-20251001"; // メディア分析・KW・競合などの調査系
 
 export function aiEnabled() {
   return Boolean(process.env.ANTHROPIC_API_KEY);
@@ -55,7 +55,7 @@ function extractJson(text: string): unknown {
 
 const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string; task: string }> = {
   media_analysis: {
-    model: HEAVY_MODEL,
+    model: RESEARCH_MODEL,
     task: "このメディアの読者・トーン・既存カテゴリを踏まえ、検索流入を伸ばすために『不足している記事』を洗い出し、最優先で書くべき1記事を推薦してください。",
     schema: `{
   "summary": "分析サマリ(2-3文)",
@@ -66,7 +66,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 }`,
   },
   keyword_research: {
-    model: FAST_MODEL,
+    model: RESEARCH_MODEL,
     task: "推薦記事に対する主軸キーワードと候補KWを、検索意図とともに提案してください。volume/difficultyは0-100の相対推定で構いません。",
     schema: `{
   "primaryKeyword": "主軸KW",
@@ -76,7 +76,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 }`,
   },
   competitor_research: {
-    model: FAST_MODEL,
+    model: RESEARCH_MODEL,
     task: "主軸KWで上位を取る競合記事の典型パターンと、それを上回るための差別化方針を提案してください。",
     schema: `{
   "keyword": "対象KW",
@@ -85,7 +85,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 }`,
   },
   tail_keywords: {
-    model: FAST_MODEL,
+    model: RESEARCH_MODEL,
     task: "主軸KWに紐づくロングテール(テール)KWを提案し、本文内での使い方を示してください。",
     schema: `{
   "parentKeyword": "主軸KW",
@@ -94,7 +94,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 }`,
   },
   article_outline: {
-    model: FAST_MODEL,
+    model: RESEARCH_MODEL,
     task: "検索意図を満たす記事構成(タイトル・メタ・H2/H3)を作ってください。",
     schema: `{
   "title": "記事タイトル(32字前後)",
@@ -104,7 +104,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 }`,
   },
   seo_requirements: {
-    model: FAST_MODEL,
+    model: RESEARCH_MODEL,
     task: "目標文字数、KW配置、内部リンク、外部リンク、CTAなどのSEO要件を定義してください。",
     schema: `{
   "targetWordCount": { "min": 2800, "recommended": 3600, "max": 4600 },
@@ -116,7 +116,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 }`,
   },
   draft_article: {
-    model: HEAVY_MODEL,
+    model: WRITING_MODEL,
     task: "これまでの構成・SEO要件に完全準拠した、公開できる品質の日本語SEO記事をMarkdownで執筆してください。E-E-A-Tを意識し、読者の検索意図を満たすこと。bodyはMarkdown本文(見出し含む)を丸ごと入れてください。",
     schema: `{
   "title": "記事タイトル",
@@ -171,10 +171,10 @@ ${spec.schema}
 JSONのみを出力してください。`;
 
   try {
-    const isHeavy = spec.model === HEAVY_MODEL;
+    const isWriting = spec.model === WRITING_MODEL;
     const msg = await client.messages.create({
       model: spec.model,
-      max_tokens: isHeavy ? 8000 : 2000,
+      max_tokens: isWriting ? 8000 : 2000,
       system,
       messages: [{ role: "user", content: user }],
     });
