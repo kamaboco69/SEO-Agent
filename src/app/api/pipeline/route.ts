@@ -3,7 +3,7 @@ import type { WorkflowStep } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { workflowSteps, type WorkflowStepKey } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
-import { getAiCompanyEntitlement, getCurrentUser } from "@/lib/auth";
+import { getAiCompanyEntitlement, getCurrentUser, reportAiCompanyUsage } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -75,15 +75,27 @@ export async function POST(req: NextRequest) {
 
   if (!mediaId) return NextResponse.json({ error: "mediaId is required" }, { status: 400 });
 
+  // 実行前に今月のトークン上限をチェック（超過なら開始させない）
+  const email = guard.user!.email;
+  const pre = await reportAiCompanyUsage(email);
+  if (pre.ok && !pre.allowed) {
+    return NextResponse.json(
+      { error: pre.reason ?? "今月のトークン上限に達しています", overLimit: true, usedTokens: pre.usedTokens, limit: pre.limit },
+      { status: 402 }
+    );
+  }
+
   const media = await prisma.media.findUnique({ where: { id: mediaId } });
   if (!media) return NextResponse.json({ error: "media not found" }, { status: 404 });
 
-  const firstOutput = await runStepWithAI("media_analysis", {
+  const first = await runStepWithAI("media_analysis", {
     media,
     instruction,
     targetTheme,
     steps: [],
   });
+  // 使用トークンをAICompanyの今月使用量に計上
+  await reportAiCompanyUsage(email, first.usage);
 
   const workflow = await prisma.contentWorkflow.create({
     data: {
@@ -99,7 +111,7 @@ export async function POST(req: NextRequest) {
           label: step.label,
           status: step.key === "media_analysis" ? "done" : "pending",
           input: { instruction, targetTheme, mediaId },
-          output: (step.key === "media_analysis" ? firstOutput : {}) as never,
+          output: (step.key === "media_analysis" ? first.output : {}) as never,
         })),
       },
     },
@@ -133,12 +145,13 @@ export async function PATCH(req: NextRequest) {
     const stepsForContext = workflow.steps.map((step) =>
       step.key === reviseKey ? { ...step, revisionNote } : step
     ) as WorkflowStep[];
-    const output = await runStepWithAI(reviseKey as WorkflowStepKey, {
+    const { output, usage } = await runStepWithAI(reviseKey as WorkflowStepKey, {
       media: workflow.media,
       instruction: workflow.instruction,
       targetTheme: workflow.targetTheme,
       steps: stepsForContext,
     });
+    if (guard.user) await reportAiCompanyUsage(guard.user.email, usage);
     await prisma.workflowStep.update({
       where: { workflowId_key: { workflowId, key: reviseKey } },
       data: { status: "done", revisionNote, output: output as never },
@@ -176,12 +189,13 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json(updated);
   }
 
-  const output = await runStepWithAI(nextStep.key as WorkflowStepKey, {
+  const { output, usage } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
     media: workflow.media,
     instruction: workflow.instruction,
     targetTheme: workflow.targetTheme,
     steps: workflow.steps as WorkflowStep[],
   });
+  if (guard.user) await reportAiCompanyUsage(guard.user.email, usage);
 
   await prisma.workflowStep.update({
     where: { workflowId_key: { workflowId, key: nextStep.key } },

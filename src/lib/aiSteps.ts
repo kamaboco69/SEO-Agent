@@ -127,13 +127,26 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
   },
 };
 
+export interface StepUsage {
+  model: string;
+  provider: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+export interface StepRun {
+  output: Record<string, unknown>;
+  usage: StepUsage;
+}
+
+const ZERO_USAGE: StepUsage = { model: "template", provider: "none", inputTokens: 0, outputTokens: 0 };
+
 export async function runStepWithAI(
   key: WorkflowStepKey,
   context: StepContext
-): Promise<Record<string, unknown>> {
-  // キー未設定ならテンプレ生成にフォールバック
+): Promise<StepRun> {
+  // キー未設定ならテンプレ生成にフォールバック（トークン消費なし）
   if (!aiEnabled()) {
-    return generateStepOutput(key, context) as Record<string, unknown>;
+    return { output: generateStepOutput(key, context) as Record<string, unknown>, usage: ZERO_USAGE };
   }
 
   const spec = STEP_INSTRUCTIONS[key];
@@ -179,17 +192,26 @@ JSONのみを出力してください。`;
       messages: [{ role: "user", content: user }],
     });
     const text = msg.content[0]?.type === "text" ? msg.content[0].text : "";
+    const usage: StepUsage = {
+      model: spec.model,
+      provider: "anthropic",
+      inputTokens: msg.usage?.input_tokens ?? 0,
+      outputTokens: msg.usage?.output_tokens ?? 0,
+    };
     const json = extractJson(text);
     if (json && typeof json === "object") {
-      return { ...(json as Record<string, unknown>), revisionApplied: revision ?? null, _engine: "ai" };
+      return { output: { ...(json as Record<string, unknown>), revisionApplied: revision ?? null, _engine: "ai" }, usage };
     }
-    // パース失敗 → テンプレにフォールバック
-    return { ...(generateStepOutput(key, context) as Record<string, unknown>), _engine: "template_fallback" };
+    // パース失敗 → テンプレにフォールバック（ただしトークンは消費済みなので計上する）
+    return { output: { ...(generateStepOutput(key, context) as Record<string, unknown>), _engine: "template_fallback" }, usage };
   } catch (error) {
     return {
-      ...(generateStepOutput(key, context) as Record<string, unknown>),
-      _engine: "template_fallback",
-      _error: error instanceof Error ? error.message : "ai_failed",
+      output: {
+        ...(generateStepOutput(key, context) as Record<string, unknown>),
+        _engine: "template_fallback",
+        _error: error instanceof Error ? error.message : "ai_failed",
+      },
+      usage: ZERO_USAGE,
     };
   }
 }

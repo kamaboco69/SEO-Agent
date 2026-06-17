@@ -266,6 +266,50 @@ export async function syncAiCompanyProfileByEmail(userId: string, rawEmail: stri
   }
 }
 
+function aiCompanyUsageUrl(): string | null {
+  if (process.env.AI_COMPANY_USAGE_URL) return process.env.AI_COMPANY_USAGE_URL;
+  const profile = process.env.AI_COMPANY_PROFILE_URL;
+  return profile ? profile.replace(/\/profile\/?$/, "/usage") : null;
+}
+
+export interface UsageStatus {
+  ok: boolean;
+  allowed: boolean;
+  usedTokens: number;
+  limit: number;
+  reason: string | null;
+}
+
+// AICompanyに使用トークンを計上（消費）する。tokens未指定なら現状チェックのみ。
+export async function reportAiCompanyUsage(
+  rawEmail: string,
+  usage?: { model: string; provider: string; inputTokens: number; outputTokens: number }
+): Promise<UsageStatus> {
+  const url = aiCompanyUsageUrl();
+  const fallback: UsageStatus = { ok: false, allowed: true, usedTokens: 0, limit: 0, reason: null };
+  if (!url) return fallback;
+  const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(secret ? { "x-ai-company-secret": secret } : {}) },
+      body: JSON.stringify({ email: normalizeEmail(rawEmail), ...(usage ?? {}) }),
+    });
+    if (!res.ok) return fallback;
+    const data = await res.json().catch(() => null) as Partial<UsageStatus> | null;
+    if (!data?.ok) return fallback;
+    return {
+      ok: true,
+      allowed: data.allowed ?? true,
+      usedTokens: data.usedTokens ?? 0,
+      limit: data.limit ?? 0,
+      reason: data.reason ?? null,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export interface Entitlement {
   found: boolean;     // AICompanyアカウントに連携できたか
   entitled: boolean;  // 有料プラン且つアクティブか

@@ -12,6 +12,7 @@ interface Entitlement {
   entitled: boolean;
   planName: string | null;
   billingUrl: string | null;
+  usage?: { usedTokens: number; limit: number; allowed: boolean } | null;
 }
 
 interface MediaItem {
@@ -166,6 +167,9 @@ export default function PipelinePage() {
         const e = await res.json().catch(() => ({}));
         if (res.status === 403) {
           setEntitlement({ found: Boolean(e.found), entitled: false, planName: null, billingUrl: e.billingUrl ?? null });
+        } else if (res.status === 402) {
+          alert(e.error ?? "今月のトークン上限に達しています");
+          recheckEntitlement();
         } else {
           alert(e.error ?? "開始に失敗しました");
         }
@@ -192,6 +196,7 @@ export default function PipelinePage() {
       }
       setExpanded("draft_article");
       loadHistory(selectedMediaId);
+      recheckEntitlement();
     } finally {
       setRunning(false);
     }
@@ -357,6 +362,20 @@ export default function PipelinePage() {
                   <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
                     {selectedMedia.name}（{selectedMedia.domain}）を分析し、不足記事の特定→KW/競合調査→構成→執筆まで自動実行します。
                   </p>
+                )}
+                {entitlement?.usage && entitlement.usage.limit > 0 && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[9px]" style={{ color: "var(--text-muted)" }}>
+                      <span>今月のトークン使用量（AICompany）</span>
+                      <span>{entitlement.usage.usedTokens.toLocaleString()} / {entitlement.usage.limit.toLocaleString()}</span>
+                    </div>
+                    <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: "rgba(56,189,248,0.12)" }}>
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round((entitlement.usage.usedTokens / entitlement.usage.limit) * 100))}%`, background: entitlement.usage.allowed ? "linear-gradient(90deg,#34d399,#22d3ee)" : "#f87171" }} />
+                    </div>
+                  </div>
+                )}
+                {entitlement?.usage && entitlement.usage.limit === 0 && (
+                  <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>今月のトークン: 上限なし（{entitlement.usage.usedTokens.toLocaleString()} 使用）</p>
                 )}
               </>
             )}
