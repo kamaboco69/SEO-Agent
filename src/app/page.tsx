@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
-  Globe, ChevronDown, Lock, Crown, ExternalLink,
+  Globe, ChevronDown, Lock, Crown, ExternalLink, Code2, Image as ImageIcon,
 } from "lucide-react";
 
 interface Entitlement {
@@ -46,18 +46,22 @@ interface Workflow {
 }
 
 const STEP_META: Record<string, { icon: typeof Search; color: string; short: string }> = {
-  media_analysis:      { icon: FileSearch,        color: "#34d399", short: "メディア分析・不足記事" },
-  keyword_research:    { icon: Search,            color: "#22d3ee", short: "記事KW調査" },
-  competitor_research: { icon: Users,             color: "#a78bfa", short: "競合調査" },
-  tail_keywords:       { icon: Tag,               color: "#f472b6", short: "テールKW提案" },
-  article_outline:     { icon: ListTree,          color: "#fb923c", short: "記事構成" },
-  seo_requirements:    { icon: SlidersHorizontal, color: "#facc15", short: "SEO要件" },
-  draft_article:       { icon: PenLine,           color: "#34d399", short: "記事執筆" },
+  media_analysis:           { icon: FileSearch,        color: "#34d399", short: "メディア分析・不足記事" },
+  keyword_research:         { icon: Search,            color: "#22d3ee", short: "記事KW調査" },
+  competitor_research:      { icon: Users,             color: "#a78bfa", short: "競合調査" },
+  tail_keywords:            { icon: Tag,               color: "#f472b6", short: "勝てるテールKW" },
+  tail_competitor_research: { icon: Users,             color: "#c084fc", short: "テールKW競合調査" },
+  article_outline:          { icon: ListTree,          color: "#fb923c", short: "記事構成" },
+  seo_requirements:         { icon: SlidersHorizontal, color: "#facc15", short: "SEO要件" },
+  draft_article:            { icon: PenLine,           color: "#34d399", short: "記事執筆" },
+  swell_format:             { icon: Code2,             color: "#38bdf8", short: "SWELL HTML整形" },
+  image_prompts:            { icon: ImageIcon,         color: "#f472b6", short: "画像プロンプト" },
 };
 
 const STEP_ORDER = [
   "media_analysis", "keyword_research", "competitor_research",
-  "tail_keywords", "article_outline", "seo_requirements", "draft_article",
+  "tail_keywords", "tail_competitor_research", "article_outline",
+  "seo_requirements", "draft_article", "swell_format", "image_prompts",
 ];
 
 function hasOutput(step?: Step) {
@@ -541,7 +545,7 @@ function StepOutput({ stepKey, output }: { stepKey: string; output: Record<strin
     );
   }
 
-  if (stepKey === "competitor_research") {
+  if (stepKey === "competitor_research" || stepKey === "tail_competitor_research") {
     const patterns = (o.competitorPatterns as { pattern: string; strength: string; gap: string }[]) ?? [];
     const diff = (o.differentiation as string[]) ?? [];
     return (
@@ -597,6 +601,38 @@ function StepOutput({ stepKey, output }: { stepKey: string; output: Record<strin
           </div>
         )}
         {o.cta != null && <p className="text-[10px]" style={muted}>CTA: {String(o.cta)}</p>}
+      </div>
+    );
+  }
+
+  if (stepKey === "swell_format") {
+    const html = (o.html as string) ?? "";
+    const comments = (o.imageComments as string[]) ?? [];
+    return (
+      <div className="space-y-2">
+        {o.title != null && <p className="text-[12px] font-bold" style={txt}>{String(o.title)}</p>}
+        {comments.length > 0 && (
+          <p className="text-[9px]" style={muted}>画像挿入コメント: {comments.length}箇所</p>
+        )}
+        <div className="rounded-lg p-3 bg-white text-black overflow-auto" style={{ maxHeight: "45vh" }} dangerouslySetInnerHTML={{ __html: html }} />
+        <details>
+          <summary className="text-[9px] cursor-pointer" style={muted}>HTMLソースを表示</summary>
+          <pre className="text-[10px] leading-relaxed whitespace-pre-wrap mt-1" style={{ color: "var(--text-dim)", fontFamily: "inherit", maxHeight: "30vh", overflow: "auto" }}>{html}</pre>
+        </details>
+      </div>
+    );
+  }
+
+  if (stepKey === "image_prompts") {
+    const images = (o.images as { index: number; comment: string; prompt: string }[]) ?? [];
+    return (
+      <div className="space-y-1.5">
+        {images.map((im, i) => (
+          <div key={i} className="rounded-lg px-2.5 py-2" style={{ background: "rgba(244,114,182,0.05)", border: "1px solid rgba(244,114,182,0.2)" }}>
+            <p className="text-[10px] font-semibold" style={{ color: "#f472b6" }}>#{im.index + 1} {im.comment}</p>
+            <p className="text-[10px] mt-0.5" style={txt}>{im.prompt}</p>
+          </div>
+        ))}
       </div>
     );
   }

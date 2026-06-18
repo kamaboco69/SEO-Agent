@@ -86,11 +86,20 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
   },
   tail_keywords: {
     model: RESEARCH_MODEL,
-    task: "主軸KWに紐づくロングテール(テール)KWを提案し、本文内での使い方を示してください。",
+    task: "主軸KWに紐づくロングテール(テール)KWのうち、競合に勝てそう(難易度が低く意図が明確)なものを洗い出してください。本文内での使い方も示してください。",
     schema: `{
   "parentKeyword": "主軸KW",
   "tailKeywords": [ { "keyword": "テールKW", "volume": 300, "difficulty": 25, "intent": "情報収集" } ],
   "recommendedUse": "本文での使い方"
+}`,
+  },
+  tail_competitor_research: {
+    model: RESEARCH_MODEL,
+    task: "洗い出したテールKWで上位を取る競合記事の型と、それを上回るための差別化方針を提案してください。テールの検索意図に1記事で完全に答える観点で。",
+    schema: `{
+  "keyword": "対象テールKW",
+  "competitorPatterns": [ { "pattern": "競合の型", "strength": "強み", "gap": "弱み・抜け" } ],
+  "differentiation": [ "差別化ポイント" ]
 }`,
   },
   article_outline: {
@@ -123,6 +132,27 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
   "estimatedWordCount": 3600,
   "format": "markdown",
   "body": "# タイトル\\n\\n本文をMarkdownで..."
+}`,
+  },
+  swell_format: {
+    model: WRITING_MODEL,
+    task: `直前の記事(draft_article)を、WordPressのSWELLテーマに最適化したHTMLに変換してください。要件:
+- 見出しは<h2>/<h3>。SWELLで見やすいよう、重要箇所はインラインCSSで装飾する(マーカー風の背景ハイライト、枠付きボックス、ポイントリスト等)。CSSは必ずstyle属性のインラインで記述(外部CSS/<style>タグ不可)。
+- 読者が飽きないよう、要点ボックス・注意ボックス・チェックリストなどの装飾を適度に挿入。
+- 画像を入れるべき箇所に、HTMLコメントで <!-- IMAGE: 画像の内容説明 --> を挿入(アイキャッチ含め2〜5箇所)。各コメントのテキストは後で画像生成プロンプトに使う。
+- htmlにはbody内のHTMLのみ(<html>/<head>不要)。`,
+    schema: `{
+  "title": "記事タイトル",
+  "format": "html-swell",
+  "html": "<h1>..</h1>\\n<!-- IMAGE: アイキャッチ.. -->\\n<p style=\\"..\\">..</p>",
+  "imageComments": ["アイキャッチの説明", "図解の説明"]
+}`,
+  },
+  image_prompts: {
+    model: RESEARCH_MODEL,
+    task: "swell_formatのimageComments(各<!-- IMAGE: .. -->)それぞれに対し、gpt-image-1で生成するための英語の画像生成プロンプトを作ってください。記事テーマに沿い、文字を含まない清潔でモダンな編集向けビジュアルにすること。",
+    schema: `{
+  "images": [ { "index": 0, "comment": "元のコメント", "prompt": "English image generation prompt, no text in image" } ]
 }`,
   },
 };

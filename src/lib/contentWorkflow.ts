@@ -4,10 +4,13 @@ export const workflowSteps = [
   { key: "media_analysis", label: "メディア分析・不足記事洗い出し" },
   { key: "keyword_research", label: "記事KW調査" },
   { key: "competitor_research", label: "競合調査" },
-  { key: "tail_keywords", label: "テールKW提案" },
-  { key: "article_outline", label: "記事構成提案" },
+  { key: "tail_keywords", label: "勝てるテールKW洗い出し" },
+  { key: "tail_competitor_research", label: "テールKWで競合調査" },
+  { key: "article_outline", label: "勝てる記事構成提案" },
   { key: "seo_requirements", label: "文字数・内部リンク・外部リンク提案" },
   { key: "draft_article", label: "記事執筆" },
+  { key: "swell_format", label: "SWELL最適化HTML整形＋画像挿入コメント" },
+  { key: "image_prompts", label: "画像生成プロンプト付与" },
 ] as const;
 
 export type WorkflowStepKey = (typeof workflowSteps)[number]["key"];
@@ -187,6 +190,47 @@ export function generateStepOutput(key: WorkflowStepKey, context: StepContext) {
       ],
       cta: `${context.media.name}内の関連サービス・資料請求導線へ接続`,
       primaryKeyword: keyword,
+      revisionApplied: revision ?? null,
+    };
+  }
+
+  if (key === "tail_competitor_research") {
+    const tail = prior<{ tailKeywords?: { keyword: string }[] }>(context, "tail_keywords");
+    const kw = tail?.tailKeywords?.[0]?.keyword ?? `${topic} 比較`;
+    return {
+      keyword: kw,
+      competitorPatterns: [
+        { pattern: "テール特化記事", strength: "意図が明確でCVに近い", gap: "網羅性・一次情報が弱い" },
+        { pattern: "まとめ記事内の一節", strength: "ドメインが強い", gap: "テール意図への解像度が低い" },
+      ],
+      differentiation: [
+        "テール意図に1記事で完全に答える",
+        "具体例・チェックリスト・FAQで深さを出す",
+      ],
+      revisionApplied: revision ?? null,
+    };
+  }
+
+  if (key === "swell_format") {
+    const draft = prior<{ title?: string; body?: string }>(context, "draft_article");
+    const title = draft?.title ?? `${topic}を基礎から解説`;
+    const html = [
+      `<h1>${title}</h1>`,
+      `<!-- 画像挿入: アイキャッチ。${title} を象徴するビジュアル -->`,
+      `<p>${topic}について、基礎から実践までを整理します。</p>`,
+    ].join("\n");
+    return { title, format: "html-swell", html, imageComments: [`アイキャッチ。${title} を象徴するビジュアル`], revisionApplied: revision ?? null };
+  }
+
+  if (key === "image_prompts") {
+    const swell = prior<{ imageComments?: string[] }>(context, "swell_format");
+    const comments = swell?.imageComments ?? [`${topic} のアイキャッチ`];
+    return {
+      images: comments.map((c, i) => ({
+        index: i,
+        comment: c,
+        prompt: `A clean, modern editorial illustration for a Japanese SEO article about ${topic}. ${c}. Flat design, soft colors, no text.`,
+      })),
       revisionApplied: revision ?? null,
     };
   }
