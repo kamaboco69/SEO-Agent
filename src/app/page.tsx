@@ -39,6 +39,9 @@ interface Workflow {
   targetTheme: string | null;
   status: string;
   currentStep: string;
+  selectedArticle: string | null;
+  approved1: boolean;
+  approved2: boolean;
   finalArticle: string | null;
   finalArticleTitle: string | null;
   media: MediaItem;
@@ -67,6 +70,14 @@ const STEP_ORDER = [
 function hasOutput(step?: Step) {
   return Boolean(step && step.output && Object.keys(step.output).length > 0);
 }
+
+const HISTORY_STATUS: Record<string, string> = {
+  in_progress: "生成中",
+  awaiting_selection: "記事選択待ち",
+  awaiting_approval_1: "承認待ち(執筆)",
+  awaiting_approval_2: "承認待ち(公開前)",
+  completed: "完了",
+};
 
 export default function PipelinePage() {
   const [media, setMedia] = useState<MediaItem[]>([]);
@@ -156,6 +167,27 @@ export default function PipelinePage() {
     }
   }
 
+  // in_progress の間だけ run_next を回し、ゲート(選択/承認)や完了で停止する
+  async function drive(wf: Workflow) {
+    let guard = 0;
+    while (wf.status === "in_progress" && guard < 14) {
+      guard += 1;
+      const r = await fetch("/api/pipeline", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: wf.id, action: "run_next" }),
+      });
+      if (!r.ok) break;
+      wf = (await r.json()) as Workflow;
+      setWorkflow(wf);
+      const active = STEP_ORDER.find((k) => !hasOutput(wf.steps.find((s) => s.key === k)));
+      if (active) setExpanded(active);
+    }
+    loadHistory(selectedMediaId);
+    recheckEntitlement();
+    return wf;
+  }
+
   async function runPipeline() {
     if (!selectedMediaId || running) return;
     setRunning(true);
@@ -169,41 +201,41 @@ export default function PipelinePage() {
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        if (res.status === 403) {
-          setEntitlement({ found: Boolean(e.found), entitled: false, planName: null, billingUrl: e.billingUrl ?? null });
-        } else if (res.status === 402) {
-          alert(e.error ?? "今月のトークン上限に達しています");
-          recheckEntitlement();
-        } else {
-          alert(e.error ?? "開始に失敗しました");
-        }
+        if (res.status === 403) setEntitlement({ found: Boolean(e.found), entitled: false, planName: null, billingUrl: e.billingUrl ?? null });
+        else if (res.status === 402) { alert(e.error ?? "今月のトークン上限に達しています"); recheckEntitlement(); }
+        else alert(e.error ?? "開始に失敗しました");
         return;
       }
-      let wf = (await res.json()) as Workflow;
+      const wf = (await res.json()) as Workflow;
       setWorkflow(wf);
-      setExpanded("media_analysis");
-
-      // 一気通貫：完了までステップを順に実行
-      let guard = 0;
-      while (wf.status !== "completed" && guard < 12) {
-        guard += 1;
-        const r = await fetch("/api/pipeline", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workflowId: wf.id, action: "run_next" }),
-        });
-        if (!r.ok) break;
-        wf = (await r.json()) as Workflow;
-        setWorkflow(wf);
-        const active = STEP_ORDER.find((k) => !hasOutput(wf.steps.find((s) => s.key === k)));
-        setExpanded(active ?? "draft_article");
-      }
-      setExpanded("draft_article");
-      loadHistory(selectedMediaId);
-      recheckEntitlement();
+      setExpanded("media_analysis"); // 分析結果＝おすすめ記事の選択へ
     } finally {
       setRunning(false);
     }
+  }
+
+  async function selectArticle(articleTitle: string) {
+    if (!workflow || running) return;
+    setRunning(true);
+    try {
+      const r = await fetch("/api/pipeline", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: workflow.id, action: "select_article", articleTitle }),
+      });
+      if (r.ok) { const wf = (await r.json()) as Workflow; setWorkflow(wf); await drive(wf); }
+    } finally { setRunning(false); }
+  }
+
+  async function approveGate(gate: 1 | 2) {
+    if (!workflow || running) return;
+    setRunning(true);
+    try {
+      const r = await fetch("/api/pipeline", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: workflow.id, action: "approve", gate }),
+      });
+      if (r.ok) { const wf = (await r.json()) as Workflow; setWorkflow(wf); await drive(wf); }
+    } finally { setRunning(false); }
   }
 
   async function openWorkflow(id: string) {
@@ -212,6 +244,10 @@ export default function PipelinePage() {
       const wf = (await res.json()) as Workflow;
       setWorkflow(wf);
       setExpanded("draft_article");
+      if (wf.status === "in_progress" && !running) {
+        setRunning(true);
+        try { await drive(wf); } finally { setRunning(false); }
+      }
     }
   }
 
@@ -395,8 +431,8 @@ export default function PipelinePage() {
               ) : history.map((h) => (
                 <button key={h.id} onClick={() => openWorkflow(h.id)}
                   className="w-full text-left px-4 py-2.5 transition-colors" style={{ borderBottom: "1px solid rgba(56,189,248,0.06)", background: workflow?.id === h.id ? "rgba(56,189,248,0.06)" : "transparent" }}>
-                  <p className="text-[11px] font-semibold truncate" style={{ color: "var(--text)" }}>{h.finalArticleTitle ?? h.targetTheme ?? h.instruction}</p>
-                  <p className="text-[9px] mt-0.5" style={{ color: h.status === "completed" ? "#34d399" : "var(--text-muted)" }}>{h.status === "completed" ? "完了" : "進行中"}</p>
+                  <p className="text-[11px] font-semibold truncate" style={{ color: "var(--text)" }}>{h.finalArticleTitle ?? h.selectedArticle ?? h.targetTheme ?? h.instruction}</p>
+                  <p className="text-[9px] mt-0.5" style={{ color: h.status === "completed" ? "#34d399" : h.status.startsWith("awaiting") ? "#facc15" : "var(--text-muted)" }}>{HISTORY_STATUS[h.status] ?? h.status}</p>
                 </button>
               ))}
             </div>
@@ -415,6 +451,8 @@ export default function PipelinePage() {
             </div>
           ) : (
             <div className="space-y-3">
+              <StatusBanner workflow={workflow} running={running} onSelect={selectArticle} onApprove={approveGate} />
+
               {STEP_ORDER.map((key) => {
                 const step = workflow.steps.find((s) => s.key === key);
                 const meta = STEP_META[key];
@@ -479,6 +517,96 @@ export default function PipelinePage() {
       </div>
     </div>
   );
+}
+
+// ── 段階実行：通知＋人間アクション ──
+function StatusBanner({ workflow, running, onSelect, onApprove }: {
+  workflow: Workflow; running: boolean;
+  onSelect: (t: string) => void; onApprove: (g: 1 | 2) => void;
+}) {
+  const s = workflow.status;
+
+  if (s === "in_progress") {
+    return (
+      <div className="rounded-xl px-4 py-3 flex items-center gap-2" style={{ background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)" }}>
+        <Loader2 size={15} className="animate-spin" style={{ color: "var(--blue)" }} />
+        <p className="text-xs font-bold" style={{ color: "var(--blue)" }}>AIが自動生成中…</p>
+      </div>
+    );
+  }
+
+  if (s === "awaiting_selection") {
+    const m = workflow.steps.find((st) => st.key === "media_analysis");
+    const o = (m?.output ?? {}) as Record<string, unknown>;
+    const gaps = (o.contentGaps as { title: string; intent: string; reason: string }[]) ?? [];
+    const rec = o.recommendedArticle as string | undefined;
+    const items = gaps.length ? gaps : (rec ? [{ title: rec, intent: "", reason: "" }] : []);
+    return (
+      <div className="rounded-xl p-4" style={{ background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.3)" }}>
+        <p className="text-xs font-bold mb-2" style={{ color: "#34d399" }}>📝 おすすめ記事を選択してください</p>
+        <div className="space-y-1.5">
+          {items.map((g, i) => {
+            const isRec = g.title === rec;
+            return (
+              <button key={i} disabled={running} onClick={() => onSelect(g.title)}
+                className="w-full text-left rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
+                style={{ background: isRec ? "rgba(52,211,153,0.12)" : "rgba(56,189,248,0.04)", border: `1px solid ${isRec ? "rgba(52,211,153,0.4)" : "rgba(56,189,248,0.14)"}` }}>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-semibold flex-1" style={{ color: "var(--text)" }}>{g.title}</span>
+                  {isRec && <Pill color="#34d399">おすすめ</Pill>}
+                  {g.intent && <Pill color="#a78bfa">{g.intent}</Pill>}
+                </div>
+                {g.reason && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{g.reason}</p>}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[9px] mt-2" style={{ color: "var(--text-muted)" }}>選択すると、その記事に絞ってKW調査→競合調査→執筆まで自動実行します。</p>
+      </div>
+    );
+  }
+
+  if (s === "awaiting_approval_1") {
+    return (
+      <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.35)" }}>
+        <Check size={18} style={{ color: "#34d399" }} />
+        <div className="flex-1">
+          <p className="text-xs font-bold" style={{ color: "#34d399" }}>✅ 記事の執筆が完了しました</p>
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>内容を確認し、問題なければ承認してHTML整形・画像準備へ進みます。</p>
+        </div>
+        <button disabled={running} onClick={() => onApprove(1)} className="cyber-btn-primary px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40">
+          {running ? <Loader2 size={13} className="animate-spin" /> : "承認して次へ"}
+        </button>
+      </div>
+    );
+  }
+
+  if (s === "awaiting_approval_2") {
+    return (
+      <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.35)" }}>
+        <Sparkles size={18} style={{ color: "#a78bfa" }} />
+        <div className="flex-1">
+          <p className="text-xs font-bold" style={{ color: "#a78bfa" }}>🎉 記事が完成しました（SWELL HTML＋画像プロンプト）</p>
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>確認してOKなら公開準備へ。WordPress下書き保存・画像生成・公開はフェーズ3/4で接続します。</p>
+        </div>
+        <button disabled={running} onClick={() => onApprove(2)} className="px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40"
+          style={{ background: "rgba(167,139,250,0.18)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}>
+          {running ? <Loader2 size={13} className="animate-spin" /> : "確認OK・公開準備へ"}
+        </button>
+      </div>
+    );
+  }
+
+  if (s === "completed") {
+    return (
+      <div className="rounded-xl px-4 py-3 flex items-center gap-2" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.3)" }}>
+        <Check size={15} style={{ color: "#34d399" }} />
+        <p className="text-xs font-bold" style={{ color: "#34d399" }}>公開準備完了 — WordPress連携を設定すると下書き保存・公開できます（フェーズ3）</p>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ── ステップ出力の表示 ──

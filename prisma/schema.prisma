@@ -156,6 +156,9 @@ model ContentWorkflow {
   status            String   @default("draft")
   currentStep       String   @default("media_analysis")
   automationMode    String   @default("approval_required")
+  selectedArticle   String?
+  approved1         Boolean  @default(false)
+  approved2         Boolean  @default(false)
   finalArticleTitle String?
   finalArticle      String?
   createdAt         DateTime @default(now())
