@@ -221,22 +221,11 @@ export default function PipelinePage() {
       }
       const wf = (await res.json()) as Workflow;
       setWorkflow(wf);
-      setExpanded("media_analysis"); // 分析結果＝おすすめ記事の選択へ
+      setExpanded("media_analysis");
+      await drive(wf); // 選択ゲートなし → そのまま執筆まで自動実行
     } finally {
       setRunning(false);
     }
-  }
-
-  async function selectArticle(articleTitle: string) {
-    if (!workflow || running) return;
-    setRunning(true);
-    try {
-      const r = await fetch("/api/pipeline", {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflowId: workflow.id, action: "select_article", articleTitle }),
-      });
-      if (r.ok) { const wf = (await r.json()) as Workflow; setWorkflow(wf); await drive(wf); }
-    } finally { setRunning(false); }
   }
 
   async function approveGate(gate: 1 | 2) {
@@ -541,7 +530,7 @@ export default function PipelinePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <StatusBanner workflow={workflow} running={running} onSelect={selectArticle} onApprove={approveGate} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
+              <StatusBanner workflow={workflow} running={running} onApprove={approveGate} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
 
               {STEP_ORDER.map((key) => {
                 const step = workflow.steps.find((s) => s.key === key);
@@ -610,9 +599,9 @@ export default function PipelinePage() {
 }
 
 // ── 段階実行：通知＋人間アクション ──
-function StatusBanner({ workflow, running, onSelect, onApprove, onWp, onReject, onCancel }: {
+function StatusBanner({ workflow, running, onApprove, onWp, onReject, onCancel }: {
   workflow: Workflow; running: boolean;
-  onSelect: (t: string) => void; onApprove: (g: 1 | 2) => void;
+  onApprove: (g: 1 | 2) => void;
   onWp: (a: "wp_draft" | "wp_publish") => void;
   onReject: () => void; onCancel: () => void;
 }) {
@@ -623,37 +612,6 @@ function StatusBanner({ workflow, running, onSelect, onApprove, onWp, onReject, 
       <div className="rounded-xl px-4 py-3 flex items-center gap-2" style={{ background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)" }}>
         <Loader2 size={15} className="animate-spin" style={{ color: "var(--blue)" }} />
         <p className="text-xs font-bold" style={{ color: "var(--blue)" }}>AIが自動生成中…</p>
-      </div>
-    );
-  }
-
-  if (s === "awaiting_selection") {
-    const m = workflow.steps.find((st) => st.key === "media_analysis");
-    const o = (m?.output ?? {}) as Record<string, unknown>;
-    const gaps = (o.contentGaps as { title: string; intent: string; reason: string }[]) ?? [];
-    const rec = o.recommendedArticle as string | undefined;
-    const items = gaps.length ? gaps : (rec ? [{ title: rec, intent: "", reason: "" }] : []);
-    return (
-      <div className="rounded-xl p-4" style={{ background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.3)" }}>
-        <p className="text-xs font-bold mb-2" style={{ color: "#34d399" }}>📝 おすすめ記事を選択してください</p>
-        <div className="space-y-1.5">
-          {items.map((g, i) => {
-            const isRec = g.title === rec;
-            return (
-              <button key={i} disabled={running} onClick={() => onSelect(g.title)}
-                className="w-full text-left rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
-                style={{ background: isRec ? "rgba(52,211,153,0.12)" : "rgba(56,189,248,0.04)", border: `1px solid ${isRec ? "rgba(52,211,153,0.4)" : "rgba(56,189,248,0.14)"}` }}>
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] font-semibold flex-1" style={{ color: "var(--text)" }}>{g.title}</span>
-                  {isRec && <Pill color="#34d399">おすすめ</Pill>}
-                  {g.intent && <Pill color="#a78bfa">{g.intent}</Pill>}
-                </div>
-                {g.reason && <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>{g.reason}</p>}
-              </button>
-            );
-          })}
-        </div>
-        <p className="text-[9px] mt-2" style={{ color: "var(--text-muted)" }}>選択すると、その記事に絞ってKW調査→競合調査→執筆まで自動実行します。</p>
       </div>
     );
   }

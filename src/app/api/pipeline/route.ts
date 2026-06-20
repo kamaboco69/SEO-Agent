@@ -50,15 +50,12 @@ type WfWithSteps = ContentWorkflow & { steps: WorkflowStep[] };
 // 段階実行のゲート判定。次に何をすべきか（ステップ実行 or 人間アクション or 完了）。
 function gate(wf: WfWithSteps):
   | "running"
-  | "awaiting_selection"
   | "awaiting_approval_1"
   | "awaiting_approval_2"
   | "completed" {
   const ordered = workflowSteps.map((s) => wf.steps.find((st) => st.key === s.key)).filter(Boolean) as WorkflowStep[];
   const next = ordered.find((st) => !hasOutput(st));
   if (!next) return wf.approved2 ? "completed" : "awaiting_approval_2";
-  // 記事選択ゲート：おすすめ記事を人間が選ぶまでKW調査に進まない
-  if (next.key === "keyword_research" && !wf.selectedArticle) return "awaiting_selection";
   // 承認ゲート1：執筆完了→人間承認までHTML整形に進まない
   if (next.key === "swell_format" && !wf.approved1) return "awaiting_approval_1";
   return "running";
@@ -112,13 +109,17 @@ export async function POST(req: NextRequest) {
   const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme, steps: [] });
   await reportAiCompanyUsage(email, first.usage);
 
+  // おすすめ記事を自動採用（人間選択ゲートは廃止）。分析の推薦記事を以降の対象にする。
+  const recommended = (first.output as { recommendedArticle?: string }).recommendedArticle ?? targetTheme ?? null;
+
   const workflow = await prisma.contentWorkflow.create({
     data: {
       mediaId,
       instruction,
-      targetTheme,
+      targetTheme: recommended ?? targetTheme,
+      selectedArticle: recommended,
       automationMode: "staged",
-      status: "awaiting_selection",
+      status: "in_progress",
       currentStep: "keyword_research",
       steps: {
         create: workflowSteps.map((step) => ({
