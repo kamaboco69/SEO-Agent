@@ -168,6 +168,8 @@ model ContentWorkflow {
   wpEditLink        String?
   wpViewLink        String?
   wpPublished       Boolean  @default(false)
+  gdocId            String?
+  gdocUrl           String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

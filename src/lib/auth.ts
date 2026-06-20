@@ -272,6 +272,37 @@ function aiCompanyUsageUrl(): string | null {
   return profile ? profile.replace(/\/profile\/?$/, "/usage") : null;
 }
 
+function aiCompanyGdocUrl(): string | null {
+  if (process.env.AI_COMPANY_GDOC_URL) return process.env.AI_COMPANY_GDOC_URL;
+  const profile = process.env.AI_COMPANY_PROFILE_URL;
+  return profile ? profile.replace(/\/profile\/?$/, "/gdoc") : null;
+}
+
+// 記事をGoogleドキュメントへ保存/上書き（AICompanyのサービスアカウント経由）。
+// docId を渡すと同じDocに上書き。失敗してもパイプラインは止めない。
+export async function saveGoogleDoc(
+  docId: string | null,
+  title: string,
+  content: string
+): Promise<{ docId: string; url: string } | null> {
+  const url = aiCompanyGdocUrl();
+  if (!url) return null;
+  const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(secret ? { "x-ai-company-secret": secret } : {}) },
+      body: JSON.stringify({ docId, title, content }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null) as { ok?: boolean; docId?: string; url?: string } | null;
+    if (!data?.ok || !data.docId) return null;
+    return { docId: data.docId, url: data.url ?? "" };
+  } catch {
+    return null;
+  }
+}
+
 export interface UsageStatus {
   ok: boolean;
   allowed: boolean;

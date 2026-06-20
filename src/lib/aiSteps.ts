@@ -13,11 +13,40 @@ export function aiEnabled() {
 }
 
 type StepContext = {
-  media: Pick<Media, "name" | "domain" | "description" | "audience" | "tone" | "mainCategories">;
+  media: Pick<Media, "name" | "domain" | "description" | "audience" | "tone" | "mainCategories" | "wpUrl">;
   instruction: string;
   targetTheme?: string | null;
   steps: Pick<WorkflowStep, "key" | "output" | "revisionNote">[];
 };
+
+// 対象メディアの実サイト(トップページ)からテキストを取得し、分析の材料にする。
+async function fetchSiteContext(media: StepContext["media"]): Promise<string | null> {
+  const target = media.wpUrl?.trim() || `https://${media.domain}`;
+  const url = /^https?:\/\//.test(target) ? target : `https://${target}`;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (SEO Agent)" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? "";
+    const headings = Array.from(html.matchAll(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi))
+      .map((m) => m[1].replace(/<[^>]+>/g, "").trim())
+      .filter(Boolean)
+      .slice(0, 40);
+    const body = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 2500);
+    return [`URL: ${url}`, `TITLE: ${title}`, `HEADINGS: ${headings.join(" / ")}`, `TEXT: ${body}`].join("\n");
+  } catch {
+    return null;
+  }
+}
 
 function mediaCategories(media: StepContext["media"]) {
   return Array.isArray(media.mainCategories)
@@ -56,7 +85,11 @@ function extractJson(text: string): unknown {
 const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string; task: string }> = {
   media_analysis: {
     model: RESEARCH_MODEL,
-    task: "このメディアの読者・トーン・既存カテゴリを踏まえ、検索流入を伸ばすために『不足している記事』を洗い出し、最優先で書くべき1記事を推薦してください。",
+    task: `siteContext(実際のサイト内容)・メディア名・ドメインから、このメディアが扱う事業領域/業種/読者を推定し、その領域で『検索流入が見込めるのに不足している具体的な記事テーマ』を洗い出してください。
+重要:
+- 推薦タイトルは必ずこのメディアの業種・事業に即した具体的なものにする（例: ホームページ制作会社なら「ホームページ制作の費用相場と内訳」等）。
+- instruction はあくまで補助的な方針。instructionの文言（例:「検索流入を伸ばす記事を作る」）を記事タイトルにそのまま使ってはいけない。
+- contentGaps は4〜6件、それぞれ実在しそうな具体的タイトルにする。`,
     schema: `{
   "summary": "分析サマリ(2-3文)",
   "mediaProfile": { "audience": "想定読者", "tone": "トーン", "categories": ["..."] },
@@ -187,6 +220,9 @@ export async function runStepWithAI(
 与えられたメディアと、これまでのステップ出力を踏まえて、次のタスクを実行します。
 必ず指定されたJSONスキーマに厳密に従い、JSON以外のテキスト(説明・前置き・コードフェンス)は一切出力しないでください。`;
 
+  // メディア分析では実サイトの内容を取得して材料にする
+  const siteContext = key === "media_analysis" ? await fetchSiteContext(context.media) : null;
+
   const payload = {
     media: {
       name: context.media.name,
@@ -196,6 +232,7 @@ export async function runStepWithAI(
       tone: context.media.tone,
       categories: mediaCategories(context.media),
     },
+    siteContext,
     instruction: context.instruction,
     targetTheme: context.targetTheme ?? null,
     previousSteps: priorOutputs(context),

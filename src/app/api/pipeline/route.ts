@@ -3,7 +3,7 @@ import type { ContentWorkflow, WorkflowStep } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { workflowSteps, type WorkflowStepKey } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
-import { getAiCompanyEntitlement, getCurrentUser, reportAiCompanyUsage } from "@/lib/auth";
+import { getAiCompanyEntitlement, getCurrentUser, reportAiCompanyUsage, saveGoogleDoc } from "@/lib/auth";
 import { wpUpsertPost } from "@/lib/wordpress";
 
 export const dynamic = "force-dynamic";
@@ -232,10 +232,17 @@ export async function PATCH(req: NextRequest) {
       data: { status: "done", revisionNote, output: output as never },
     });
     const isDraft = reviseKey === "draft_article";
+    let gdocData: { gdocId?: string; gdocUrl?: string } = {};
+    if (isDraft) {
+      const title = (output as { title?: string }).title ?? workflow.selectedArticle ?? "SEO記事";
+      const body = (output as { body?: string }).body ?? "";
+      const doc = await saveGoogleDoc(workflow.gdocId, title, body); // 同じDocへ上書き
+      if (doc) gdocData = { gdocId: doc.docId, gdocUrl: doc.url };
+    }
     const updated = await prisma.contentWorkflow.update({
       where: { id: workflowId },
       data: isDraft
-        ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null }
+        ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null, ...gdocData }
         : {},
       include: includeWorkflow(),
     });
@@ -267,12 +274,20 @@ export async function PATCH(req: NextRequest) {
   workflow = await prisma.contentWorkflow.findUnique({ where: { id: workflowId }, include: includeWorkflow() });
   const g2 = gate(workflow!);
   const isDraft = nextStep.key === "draft_article";
+  let gdocData: { gdocId?: string; gdocUrl?: string } = {};
+  if (isDraft) {
+    // 執筆完了時にGoogleドキュメントへ保存（既存があれば上書き）
+    const title = (output as { title?: string }).title ?? workflow!.selectedArticle ?? "SEO記事";
+    const body = (output as { body?: string }).body ?? "";
+    const doc = await saveGoogleDoc(workflow!.gdocId, title, body);
+    if (doc) gdocData = { gdocId: doc.docId, gdocUrl: doc.url };
+  }
   const updated = await prisma.contentWorkflow.update({
     where: { id: workflowId },
     data: {
       status: storedStatus(g2),
       currentStep: nextStep.key,
-      ...(isDraft ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null } : {}),
+      ...(isDraft ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null, ...gdocData } : {}),
     },
     include: includeWorkflow(),
   });

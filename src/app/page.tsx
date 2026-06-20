@@ -50,6 +50,8 @@ interface Workflow {
   wpEditLink: string | null;
   wpViewLink: string | null;
   wpPublished: boolean;
+  gdocId: string | null;
+  gdocUrl: string | null;
   media: MediaItem;
   steps: Step[];
 }
@@ -249,6 +251,28 @@ export default function PipelinePage() {
     } finally { setRunning(false); }
   }
 
+  async function rejectDraft() {
+    if (!workflow || running) return;
+    const note = window.prompt("差戻し（再執筆）。修正の指示があれば入力してください（任意）") ?? "";
+    setRunning(true);
+    try {
+      const r = await fetch("/api/pipeline", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: workflow.id, action: "revise", stepKey: "draft_article", revisionNote: note || null }),
+      });
+      if (r.ok) { setWorkflow(await r.json()); setExpanded("draft_article"); }
+    } finally { setRunning(false); }
+  }
+
+  async function cancelWorkflow() {
+    if (!workflow) return;
+    if (!confirm("このワークフローを取り消しますか？（生成内容は破棄されます）")) return;
+    await fetch(`/api/pipeline?id=${workflow.id}`, { method: "DELETE" });
+    setWorkflow(null);
+    setExpanded(null);
+    loadHistory(selectedMediaId);
+  }
+
   async function wpAction(action: "wp_draft" | "wp_publish") {
     if (!workflow || running) return;
     setRunning(true);
@@ -406,6 +430,9 @@ export default function PipelinePage() {
                 </button>
                 {showWp && (
                   <div className="space-y-1.5 mt-1.5">
+                    {selectedMedia.wpUrl && (
+                      <p className="text-[9px]" style={{ color: "#34d399" }}>接続済み: {selectedMedia.wpUrl}（変更する場合のみ再入力）</p>
+                    )}
                     <input value={wpUrl} onChange={(e) => setWpUrl(e.target.value)} placeholder="https://example.com" className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]" />
                     <input value={wpSecret} onChange={(e) => setWpSecret(e.target.value)} placeholder="接続シークレット（mu-pluginのSEO_AGENT_SECRET）" className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]" />
                     <button onClick={saveWpConnection} disabled={wpSaving || !wpUrl.trim() || !wpSecret.trim()}
@@ -514,7 +541,7 @@ export default function PipelinePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <StatusBanner workflow={workflow} running={running} onSelect={selectArticle} onApprove={approveGate} onWp={wpAction} />
+              <StatusBanner workflow={workflow} running={running} onSelect={selectArticle} onApprove={approveGate} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
 
               {STEP_ORDER.map((key) => {
                 const step = workflow.steps.find((s) => s.key === key);
@@ -583,10 +610,11 @@ export default function PipelinePage() {
 }
 
 // ── 段階実行：通知＋人間アクション ──
-function StatusBanner({ workflow, running, onSelect, onApprove, onWp }: {
+function StatusBanner({ workflow, running, onSelect, onApprove, onWp, onReject, onCancel }: {
   workflow: Workflow; running: boolean;
   onSelect: (t: string) => void; onApprove: (g: 1 | 2) => void;
   onWp: (a: "wp_draft" | "wp_publish") => void;
+  onReject: () => void; onCancel: () => void;
 }) {
   const s = workflow.status;
 
@@ -632,15 +660,32 @@ function StatusBanner({ workflow, running, onSelect, onApprove, onWp }: {
 
   if (s === "awaiting_approval_1") {
     return (
-      <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.35)" }}>
-        <Check size={18} style={{ color: "#34d399" }} />
-        <div className="flex-1">
+      <div className="rounded-xl p-4" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.35)" }}>
+        <div className="flex items-center gap-2 mb-1">
+          <Check size={16} style={{ color: "#34d399" }} />
           <p className="text-xs font-bold" style={{ color: "#34d399" }}>✅ 記事の執筆が完了しました</p>
-          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>内容を確認し、問題なければ承認してHTML整形・画像準備へ進みます。</p>
         </div>
-        <button disabled={running} onClick={() => onApprove(1)} className="cyber-btn-primary px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40">
-          {running ? <Loader2 size={13} className="animate-spin" /> : "承認して次へ"}
-        </button>
+        <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
+          内容を確認してください。承認するとHTML整形・画像準備へ進みます。差戻すと指示を反映して再執筆します。
+        </p>
+        {workflow.gdocUrl && (
+          <a href={workflow.gdocUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-[10px] font-bold mb-2.5" style={{ color: "var(--cyan)" }}>
+            📄 Googleドキュメントで確認 ↗
+          </a>
+        )}
+        <div className="flex gap-2">
+          <button disabled={running} onClick={() => onApprove(1)} className="cyber-btn-primary px-4 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40">
+            {running ? <Loader2 size={13} className="animate-spin" /> : "承認して次へ"}
+          </button>
+          <button disabled={running} onClick={onReject} className="px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40"
+            style={{ background: "rgba(251,146,60,0.12)", border: "1px solid rgba(251,146,60,0.4)", color: "#fb923c" }}>
+            差戻して再執筆
+          </button>
+          <button disabled={running} onClick={onCancel} className="px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40"
+            style={{ background: "transparent", border: "1px solid rgba(248,113,113,0.3)", color: "rgba(248,113,113,0.85)" }}>
+            取消
+          </button>
+        </div>
       </div>
     );
   }
