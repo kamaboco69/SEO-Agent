@@ -7,7 +7,7 @@ import { getAiCompanyEntitlement, getCurrentUser, reportAiCompanyUsage, saveGoog
 import { wpUpsertPost } from "@/lib/wordpress";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // 一気通貫はAICompany有料契約者限定。未契約なら 403 + 課金導線を返す。
 async function guardEntitlement() {
