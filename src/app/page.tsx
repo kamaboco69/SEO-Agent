@@ -22,6 +22,8 @@ interface MediaItem {
   description: string | null;
   syncStatus: string;
   aiCompanyMediaId: string | null;
+  wpUrl?: string | null;
+  wpConnectedAt?: string | null;
   _count?: { workflows: number };
 }
 
@@ -44,6 +46,10 @@ interface Workflow {
   approved2: boolean;
   finalArticle: string | null;
   finalArticleTitle: string | null;
+  wpPostId: number | null;
+  wpEditLink: string | null;
+  wpViewLink: string | null;
+  wpPublished: boolean;
   media: MediaItem;
   steps: Step[];
 }
@@ -97,6 +103,11 @@ export default function PipelinePage() {
   const [copied, setCopied] = useState(false);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [entLoading, setEntLoading] = useState(true);
+  const [showWp, setShowWp] = useState(false);
+  const [wpUrl, setWpUrl] = useState("");
+  const [wpSecret, setWpSecret] = useState("");
+  const [wpSaving, setWpSaving] = useState(false);
+  const [wpMsg, setWpMsg] = useState("");
 
   const loadMedia = useCallback(async () => {
     const res = await fetch("/api/media");
@@ -238,6 +249,34 @@ export default function PipelinePage() {
     } finally { setRunning(false); }
   }
 
+  async function wpAction(action: "wp_draft" | "wp_publish") {
+    if (!workflow || running) return;
+    setRunning(true);
+    try {
+      const r = await fetch("/api/pipeline", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: workflow.id, action }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) setWorkflow(d as Workflow);
+      else alert(d.error ?? "WordPress操作に失敗しました");
+    } finally { setRunning(false); }
+  }
+
+  async function saveWpConnection() {
+    if (!selectedMediaId || !wpUrl.trim() || !wpSecret.trim()) return;
+    setWpSaving(true); setWpMsg("");
+    try {
+      const r = await fetch("/api/media/wp", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: selectedMediaId, wpUrl: wpUrl.trim(), wpSecret: wpSecret.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.ok) { setWpMsg(`✅ 接続成功${d.site ? `: ${d.site}` : ""}`); setWpSecret(""); await loadMedia(); }
+      else setWpMsg(`❌ ${d.error ?? "接続に失敗しました"}`);
+    } finally { setWpSaving(false); }
+  }
+
   async function openWorkflow(id: string) {
     const res = await fetch(`/api/pipeline?id=${id}`);
     if (res.ok) {
@@ -354,6 +393,30 @@ export default function PipelinePage() {
                 ))}
               </div>
             )}
+
+            {selectedMedia && (
+              <div className="pt-2" style={{ borderTop: "1px solid rgba(56,189,248,0.1)" }}>
+                <button onClick={() => { setShowWp((v) => !v); setWpUrl(selectedMedia.wpUrl ?? ""); setWpMsg(""); }}
+                  className="w-full flex items-center justify-between text-[10px] font-bold py-1" style={{ color: "var(--text-muted)" }}>
+                  <span className="flex items-center gap-1.5">
+                    <Globe size={11} style={{ color: selectedMedia.wpUrl ? "#34d399" : "var(--text-muted)" }} />
+                    WordPress接続 {selectedMedia.wpUrl ? "✅" : "（未接続）"}
+                  </span>
+                  <ChevronDown size={12} style={{ transform: showWp ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+                </button>
+                {showWp && (
+                  <div className="space-y-1.5 mt-1.5">
+                    <input value={wpUrl} onChange={(e) => setWpUrl(e.target.value)} placeholder="https://example.com" className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]" />
+                    <input value={wpSecret} onChange={(e) => setWpSecret(e.target.value)} placeholder="接続シークレット（mu-pluginのSEO_AGENT_SECRET）" className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]" />
+                    <button onClick={saveWpConnection} disabled={wpSaving || !wpUrl.trim() || !wpSecret.trim()}
+                      className="cyber-btn-primary w-full py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">
+                      {wpSaving ? "テスト中…" : "接続テストして保存"}
+                    </button>
+                    {wpMsg && <p className="text-[9px] leading-relaxed" style={{ color: wpMsg.startsWith("✅") ? "#34d399" : "#f87171" }}>{wpMsg}</p>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="glass-static rounded-xl p-4 shrink-0 space-y-3">
@@ -451,7 +514,7 @@ export default function PipelinePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <StatusBanner workflow={workflow} running={running} onSelect={selectArticle} onApprove={approveGate} />
+              <StatusBanner workflow={workflow} running={running} onSelect={selectArticle} onApprove={approveGate} onWp={wpAction} />
 
               {STEP_ORDER.map((key) => {
                 const step = workflow.steps.find((s) => s.key === key);
@@ -520,9 +583,10 @@ export default function PipelinePage() {
 }
 
 // ── 段階実行：通知＋人間アクション ──
-function StatusBanner({ workflow, running, onSelect, onApprove }: {
+function StatusBanner({ workflow, running, onSelect, onApprove, onWp }: {
   workflow: Workflow; running: boolean;
   onSelect: (t: string) => void; onApprove: (g: 1 | 2) => void;
+  onWp: (a: "wp_draft" | "wp_publish") => void;
 }) {
   const s = workflow.status;
 
@@ -582,26 +646,61 @@ function StatusBanner({ workflow, running, onSelect, onApprove }: {
   }
 
   if (s === "awaiting_approval_2") {
+    const wpConnected = Boolean(workflow.media.wpUrl);
+    const saved = Boolean(workflow.wpPostId);
     return (
-      <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.35)" }}>
-        <Sparkles size={18} style={{ color: "#a78bfa" }} />
-        <div className="flex-1">
-          <p className="text-xs font-bold" style={{ color: "#a78bfa" }}>🎉 記事が完成しました（SWELL HTML＋画像プロンプト）</p>
-          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>確認してOKなら公開準備へ。WordPress下書き保存・画像生成・公開はフェーズ3/4で接続します。</p>
+      <div className="rounded-xl p-4" style={{ background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.35)" }}>
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles size={16} style={{ color: "#a78bfa" }} />
+          <p className="text-xs font-bold" style={{ color: "#a78bfa" }}>🎉 記事が完成しました（SWELL最適化HTML）</p>
         </div>
-        <button disabled={running} onClick={() => onApprove(2)} className="px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40"
-          style={{ background: "rgba(167,139,250,0.18)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}>
-          {running ? <Loader2 size={13} className="animate-spin" /> : "確認OK・公開準備へ"}
-        </button>
+        {!wpConnected ? (
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            WordPressに保存するには、左の「WordPress接続」からこのメディアの接続を設定してください。
+          </p>
+        ) : !saved ? (
+          <>
+            <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>確認OKなら、WordPressに下書き保存します。</p>
+            <button disabled={running} onClick={() => onWp("wp_draft")} className="px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40"
+              style={{ background: "rgba(167,139,250,0.18)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}>
+              {running ? <Loader2 size={13} className="animate-spin" /> : "WordPressに下書き保存"}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
+              下書き保存済み。WordPressで内容を確認 → 問題なければ公開してください。
+              {workflow.wpEditLink && <> <a href={workflow.wpEditLink} target="_blank" rel="noopener noreferrer" style={{ color: "var(--cyan)" }}>編集を開く ↗</a></>}
+            </p>
+            <div className="flex gap-2">
+              <button disabled={running} onClick={() => onWp("wp_draft")} className="px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40"
+                style={{ background: "transparent", border: "1px solid rgba(167,139,250,0.4)", color: "#a78bfa" }}>
+                下書きを更新
+              </button>
+              <button disabled={running} onClick={() => onWp("wp_publish")} className="cyber-btn-primary px-4 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40">
+                {running ? <Loader2 size={13} className="animate-spin" /> : "公開する"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
   if (s === "completed") {
     return (
-      <div className="rounded-xl px-4 py-3 flex items-center gap-2" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.3)" }}>
-        <Check size={15} style={{ color: "#34d399" }} />
-        <p className="text-xs font-bold" style={{ color: "#34d399" }}>公開準備完了 — WordPress連携を設定すると下書き保存・公開できます（フェーズ3）</p>
+      <div className="rounded-xl px-4 py-3" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.3)" }}>
+        <div className="flex items-center gap-2">
+          <Check size={15} style={{ color: "#34d399" }} />
+          <p className="text-xs font-bold" style={{ color: "#34d399" }}>
+            {workflow.wpPublished ? "✅ WordPressに公開しました" : "完了"}
+          </p>
+        </div>
+        {workflow.wpViewLink && (
+          <a href={workflow.wpViewLink} target="_blank" rel="noopener noreferrer" className="text-[10px] mt-1 inline-block" style={{ color: "var(--cyan)" }}>
+            公開ページを開く ↗
+          </a>
+        )}
       </div>
     );
   }

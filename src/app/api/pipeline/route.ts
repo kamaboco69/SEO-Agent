@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { workflowSteps, type WorkflowStepKey } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
 import { getAiCompanyEntitlement, getCurrentUser, reportAiCompanyUsage } from "@/lib/auth";
+import { wpUpsertPost } from "@/lib/wordpress";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -173,6 +174,45 @@ export async function PATCH(req: NextRequest) {
     const g = gate(workflow);
     const updated = await prisma.contentWorkflow.update({
       where: { id: workflowId }, data: { status: storedStatus(g) }, include: includeWorkflow(),
+    });
+    return NextResponse.json(updated);
+  }
+
+  // WordPress 下書き保存 / 公開
+  if (action === "wp_draft" || action === "wp_publish") {
+    const media = workflow.media;
+    if (!media.wpUrl || !media.wpSecret) {
+      return NextResponse.json({ error: "このメディアはWordPress未接続です" }, { status: 400 });
+    }
+    const swell = workflow.steps.find((s) => s.key === "swell_format");
+    const swellOut = (swell?.output ?? {}) as { html?: string; title?: string };
+    const content = swellOut.html ?? workflow.finalArticle ?? "";
+    const title = workflow.finalArticleTitle ?? swellOut.title ?? workflow.selectedArticle ?? "記事";
+    if (!content) return NextResponse.json({ error: "保存する本文がありません" }, { status: 400 });
+
+    const status = action === "wp_publish" ? "publish" : "draft";
+    let result;
+    try {
+      result = await wpUpsertPost(media.wpUrl, media.wpSecret, {
+        title,
+        content,
+        status,
+        postId: workflow.wpPostId ?? undefined,
+      });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "WordPress保存に失敗しました" }, { status: 502 });
+    }
+
+    const updated = await prisma.contentWorkflow.update({
+      where: { id: workflowId },
+      data: {
+        wpPostId: result.postId,
+        wpEditLink: result.editLink,
+        wpViewLink: result.viewLink,
+        wpPublished: action === "wp_publish" ? true : workflow.wpPublished,
+        ...(action === "wp_publish" ? { status: "completed", approved2: true } : {}),
+      },
+      include: includeWorkflow(),
     });
     return NextResponse.json(updated);
   }

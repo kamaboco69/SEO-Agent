@@ -141,6 +141,9 @@ model Media {
   aiCompanyMediaId  String?
   syncStatus        String   @default("pending")
   syncMessage       String?
+  wpUrl             String?
+  wpSecret          String?
+  wpConnectedAt     DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -161,6 +164,10 @@ model ContentWorkflow {
   approved2         Boolean  @default(false)
   finalArticleTitle String?
   finalArticle      String?
+  wpPostId          Int?
+  wpEditLink        String?
+  wpViewLink        String?
+  wpPublished       Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
