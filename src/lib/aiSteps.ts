@@ -82,6 +82,101 @@ function extractJson(text: string): unknown {
   }
 }
 
+// ── swell_format 用ヘルパー（HTMLはJSONに包まず生で扱う）──
+function stripCodeFence(text: string): string {
+  let t = text.trim();
+  t = t.replace(/^```(?:html)?\s*\n?/i, "");
+  t = t.replace(/\n?```\s*$/i, "");
+  return t.trim();
+}
+
+function extractImageComments(html: string): string[] {
+  return [...html.matchAll(/<!--\s*IMAGE:\s*([\s\S]*?)-->/gi)].map((m) => m[1].trim()).filter(Boolean);
+}
+
+// IMAGEコメントが1つも無ければ、先頭にアイキャッチ用コメントを差し込む（＝WordPressのアイキャッチ担保）
+function ensureEyecatch(html: string, title: string): string {
+  if (/<!--\s*IMAGE:/i.test(html)) return html;
+  return `<!-- IMAGE: 記事「${title}」のアイキャッチ。テーマを象徴する清潔でモダンな編集向けビジュアル -->\n${html}`;
+}
+
+function inlineMd(s: string): string {
+  let t = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  t = t.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/__(.+?)__/g, "<strong>$1</strong>");
+  return t;
+}
+
+// Markdown本文を決定的に装飾HTML化（AI変換が失敗した時の完全フォールバック。本文は絶対に落とさない）
+function markdownToHtml(md: string, title: string): string {
+  const lines = md.replace(/\r\n?/g, "\n").split("\n");
+  const out: string[] = [];
+  let para: string[] = [];
+  let list: string[] | null = null;
+  let listOrdered = false;
+  const H2 = 'style="border-left:6px solid #2b6cb0;padding:.4em .6em;background:#f2f7fc;font-size:1.4em;margin:1.6em 0 .8em;"';
+  const H3 = 'style="border-bottom:2px solid #cbd5e0;padding-bottom:.2em;margin:1.4em 0 .6em;"';
+
+  const flushPara = () => { if (para.length) { out.push(`<p>${inlineMd(para.join(" "))}</p>`); para = []; } };
+  const flushList = () => {
+    if (list && list.length) {
+      const tag = listOrdered ? "ol" : "ul";
+      out.push(`<${tag} style="padding-left:1.4em;margin:1em 0;">${list.map((li) => `<li style="margin:.3em 0;">${inlineMd(li)}</li>`).join("")}</${tag}>`);
+    }
+    list = null;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+
+    // 表: ヘッダ行 + 区切り行(|---|---|)
+    if (/^\|.*\|$/.test(trimmed) && /^\|[\s:|-]+\|$/.test((lines[i + 1] ?? "").trim())) {
+      flushPara(); flushList();
+      const header = trimmed.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const rows: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length && /^\|.*\|$/.test(lines[j].trim())) {
+        rows.push(lines[j].trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+        j++;
+      }
+      i = j - 1;
+      const th = header.map((c) => `<th style="border:1px solid #cbd5e0;padding:8px;background:#2b6cb0;color:#fff;">${inlineMd(c)}</th>`).join("");
+      const trs = rows.map((r, ri) => `<tr>${r.map((c) => `<td style="border:1px solid #cbd5e0;padding:8px;background:${ri % 2 ? "#f7fafc" : "#fff"};">${inlineMd(c)}</td>`).join("")}</tr>`).join("");
+      out.push(`<table style="border-collapse:collapse;width:100%;margin:1.4em 0;font-size:.95em;"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`);
+      continue;
+    }
+
+    const h = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushPara(); flushList();
+      const level = h[1].length;
+      const textH = inlineMd(h[2]);
+      if (level === 1) {
+        if (h[2].trim() === title.trim()) continue; // タイトル重複を避ける
+        out.push(`<h2 ${H2}>${textH}</h2>`);
+      } else if (level === 2) {
+        out.push(`<h2 ${H2}>${textH}</h2>`);
+      } else {
+        out.push(`<h3 ${H3}>${textH}</h3>`);
+      }
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) { flushPara(); flushList(); continue; } // hr は無視
+
+    const ul = trimmed.match(/^[-*+]\s+(.*)$/);
+    const ol = trimmed.match(/^\d+\.\s+(.*)$/);
+    if (ul) { flushPara(); if (!list || listOrdered) { flushList(); list = []; listOrdered = false; } list.push(ul[1]); continue; }
+    if (ol) { flushPara(); if (!list || !listOrdered) { flushList(); list = []; listOrdered = true; } list.push(ol[1]); continue; }
+
+    if (trimmed === "") { flushPara(); flushList(); continue; }
+    para.push(trimmed);
+  }
+  flushPara(); flushList();
+  return out.join("\n");
+}
+
 const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string; task: string }> = {
   media_analysis: {
     model: RESEARCH_MODEL,
@@ -233,6 +328,11 @@ export async function runStepWithAI(
   const revision = context.steps.find((step) => step.key === key)?.revisionNote;
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+  // swell_format はHTMLをJSONに包まず生で扱う（二重引用符だらけでJSON.parseが壊れるのを回避）
+  if (key === "swell_format") {
+    return runSwellFormat(context, client, revision ?? null);
+  }
+
   const system = `あなたはSEOとコンテンツ戦略に精通した日本語のSEOアナリスト兼ライターです。
 与えられたメディアと、これまでのステップ出力を踏まえて、次のタスクを実行します。
 必ず指定されたJSONスキーマに厳密に従い、JSON以外のテキスト(説明・前置き・コードフェンス)は一切出力しないでください。`;
@@ -293,6 +393,97 @@ JSONのみを出力してください。`;
       output: {
         ...(generateStepOutput(key, context) as Record<string, unknown>),
         _engine: "template_fallback",
+        _error: error instanceof Error ? error.message : "ai_failed",
+      },
+      usage: ZERO_USAGE,
+    };
+  }
+}
+
+// swell_format 専用：draft_articleのMarkdownを「装飾済みHTML」に変換する。
+// JSONに包まず生HTMLで受け取り、失敗時はMarkdownを決定的にHTML化して本文を必ず残す。
+async function runSwellFormat(
+  context: StepContext,
+  client: Anthropic,
+  revision: string | null
+): Promise<StepRun> {
+  const draft = context.steps.find((s) => s.key === "draft_article")?.output as
+    | { title?: string; body?: string }
+    | undefined;
+  const title = (draft?.title ?? context.targetTheme ?? context.media.name).trim();
+  const markdown = (draft?.body ?? "").trim();
+
+  // 執筆本文が無ければテンプレにフォールバック
+  if (!markdown) {
+    const tmpl = generateStepOutput("swell_format", context) as Record<string, unknown>;
+    return { output: { ...tmpl, _engine: "template_fallback", _error: "no_draft_body" }, usage: ZERO_USAGE };
+  }
+
+  const spec = STEP_INSTRUCTIONS.swell_format;
+  const system = `あなたは日本語SEO記事のHTMLコーダーです。与えられたMarkdown記事を、どのWordPressテーマでも崩れない「装飾済みHTML」に変換します。
+出力はHTMLのみ。JSON・コードフェンス(\`\`\`)・前置き・後書き・説明文は一切出力しないでください。本文の情報は省略・要約せず、すべてHTMLに反映してください。`;
+
+  const user = `# タスク
+${spec.task}
+${revision ? `\n# 修正指示(必ず反映)\n${revision}\n` : ""}
+# 変換元の記事(Markdown)
+タイトル: ${title}
+
+${markdown}
+
+# 出力
+上記Markdownを装飾済みHTML(body内に貼る形)へ変換し、HTMLだけを出力してください。見出し・表・箇条書き・重要箇所の装飾を活かし、本文は省略しないこと。`;
+
+  try {
+    const stream = client.messages.stream({
+      model: WRITING_MODEL,
+      max_tokens: 32000, // 装飾HTML(インラインCSS)は冗長なので大きめ。streamなので大kも可
+      system,
+      messages: [{ role: "user", content: user }],
+    });
+    const final = await stream.finalMessage();
+    const raw = final.content
+      .filter((c): c is Anthropic.TextBlock => c.type === "text")
+      .map((c) => c.text)
+      .join("");
+    const usage: StepUsage = {
+      model: WRITING_MODEL,
+      provider: "anthropic",
+      inputTokens: final.usage?.input_tokens ?? 0,
+      outputTokens: final.usage?.output_tokens ?? 0,
+    };
+
+    let html = stripCodeFence(raw);
+    const textLen = html.replace(/<[^>]+>/g, "").trim().length;
+    const hasStructure = /<(h2|h3|table|ul|ol|p)[\s>]/i.test(html);
+    // max_tokens 打ち切り=末尾が途切れている恐れ → 決定的変換に切替（本文を完全に残す）
+    const truncated = final.stop_reason === "max_tokens";
+    const engineOk = Boolean(html) && hasStructure && textLen >= 200 && !truncated;
+    if (!engineOk) {
+      html = markdownToHtml(markdown, title); // 不十分/途切れ → 決定的変換で本文を担保
+    }
+    html = ensureEyecatch(html, title);
+    return {
+      output: {
+        title,
+        format: "html",
+        html,
+        imageComments: extractImageComments(html),
+        revisionApplied: revision,
+        _engine: engineOk ? "ai" : "md_fallback",
+      },
+      usage,
+    };
+  } catch (error) {
+    const html = ensureEyecatch(markdownToHtml(markdown, title), title);
+    return {
+      output: {
+        title,
+        format: "html",
+        html,
+        imageComments: extractImageComments(html),
+        revisionApplied: revision,
+        _engine: "md_fallback",
         _error: error instanceof Error ? error.message : "ai_failed",
       },
       usage: ZERO_USAGE,
