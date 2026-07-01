@@ -86,23 +86,19 @@ async function buildHtmlWithImages(
   return { html, count };
 }
 
-// 段階実行のゲート判定。次に何をすべきか（ステップ実行 or 人間アクション or 完了）。
-function gate(wf: WfWithSteps):
-  | "running"
-  | "awaiting_approval_1"
-  | "awaiting_approval_2"
-  | "completed" {
-  const ordered = workflowSteps.map((s) => wf.steps.find((st) => st.key === s.key)).filter(Boolean) as WorkflowStep[];
-  const next = ordered.find((st) => !hasOutput(st));
-  if (!next) return wf.approved2 ? "completed" : "awaiting_approval_2";
-  // 承認ゲート1：執筆完了→人間承認までHTML整形に進まない
-  if (next.key === "swell_format" && !wf.approved1) return "awaiting_approval_1";
-  return "running";
+// 未生成の最初のAIステップ
+function firstPendingStep(wf: WfWithSteps) {
+  return workflowSteps
+    .map((s) => wf.steps.find((st) => st.key === s.key))
+    .find((st) => st && !hasOutput(st));
 }
 
-// 保存用ステータス（"running" は内部的に in_progress として保存）
-function storedStatus(g: ReturnType<typeof gate>): string {
-  return g === "running" ? "in_progress" : g;
+// 全自動：AIステップが残る、またはWP下書き保存が未実施なら in_progress。それ以外は completed。
+function computeStatus(wf: WfWithSteps & { media?: { wpUrl?: string | null; wpSecret?: string | null } }): "in_progress" | "completed" {
+  if (firstPendingStep(wf)) return "in_progress";
+  const wpConnected = Boolean(wf.media?.wpUrl && wf.media?.wpSecret);
+  if (wpConnected && !wf.wpPostId) return "in_progress"; // WP自動保存が残っている
+  return "completed";
 }
 
 // GET: 一覧 or 単体
@@ -187,38 +183,10 @@ export async function PATCH(req: NextRequest) {
   const action = String(body.action ?? "run_next").trim();
   if (!workflowId) return NextResponse.json({ error: "workflowId is required" }, { status: 400 });
 
-  let workflow = await prisma.contentWorkflow.findUnique({ where: { id: workflowId }, include: includeWorkflow() });
+  const workflow = await prisma.contentWorkflow.findUnique({ where: { id: workflowId }, include: includeWorkflow() });
   if (!workflow) return NextResponse.json({ error: "workflow not found" }, { status: 404 });
 
-  // 記事選択：おすすめ記事を確定（以降のステップはこの記事に集中）
-  if (action === "select_article") {
-    const articleTitle = String(body.articleTitle ?? "").trim();
-    if (!articleTitle) return NextResponse.json({ error: "articleTitle is required" }, { status: 400 });
-    workflow = await prisma.contentWorkflow.update({
-      where: { id: workflowId },
-      data: { selectedArticle: articleTitle, targetTheme: articleTitle },
-      include: includeWorkflow(),
-    });
-    const g = gate(workflow);
-    const updated = await prisma.contentWorkflow.update({
-      where: { id: workflowId }, data: { status: storedStatus(g) }, include: includeWorkflow(),
-    });
-    return NextResponse.json(updated);
-  }
-
-  // 承認（ゲート1/2）
-  if (action === "approve") {
-    const g0 = Number(body.gate ?? 0);
-    const data = g0 === 1 ? { approved1: true } : g0 === 2 ? { approved2: true } : {};
-    workflow = await prisma.contentWorkflow.update({ where: { id: workflowId }, data, include: includeWorkflow() });
-    const g = gate(workflow);
-    const updated = await prisma.contentWorkflow.update({
-      where: { id: workflowId }, data: { status: storedStatus(g) }, include: includeWorkflow(),
-    });
-    return NextResponse.json(updated);
-  }
-
-  // WordPress 下書き保存 / 公開
+  // WordPress 下書き保存 / 公開（手動トリガー。全自動フローでは run_next が自動保存する）
   if (action === "wp_draft" || action === "wp_publish") {
     const media = workflow.media;
     if (!media.wpUrl || !media.wpSecret) {
@@ -298,49 +266,80 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json(updated);
   }
 
-  // run_next：ゲートを尊重して次の1ステップを実行
-  const g = gate(workflow);
-  if (g !== "running") {
+  // run_next：未完のAIステップがあれば1つ実行
+  const nextStep = firstPendingStep(workflow);
+  if (nextStep) {
+    const { output, usage } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
+      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, steps: workflow.steps as WorkflowStep[],
+    });
+    await reportAiCompanyUsage(email, usage);
+    await prisma.workflowStep.update({
+      where: { workflowId_key: { workflowId, key: nextStep.key } },
+      data: { status: "done", output: output as never },
+    });
+
+    const isDraft = nextStep.key === "draft_article";
+    let gdocData: { gdocId?: string; gdocUrl?: string } = {};
+    if (isDraft) {
+      // 執筆完了時にGoogleドキュメントへ保存（既存があれば上書き）
+      const title = (output as { title?: string }).title ?? workflow.selectedArticle ?? "SEO記事";
+      const draftBody = (output as { body?: string }).body ?? "";
+      const doc = await saveGoogleDoc(workflow.gdocId, title, draftBody);
+      if (doc) gdocData = { gdocId: doc.docId, gdocUrl: doc.url };
+    }
+
+    const re = await prisma.contentWorkflow.findUnique({ where: { id: workflowId }, include: includeWorkflow() });
     const updated = await prisma.contentWorkflow.update({
-      where: { id: workflowId }, data: { status: storedStatus(g) }, include: includeWorkflow(),
+      where: { id: workflowId },
+      data: {
+        status: computeStatus(re!),
+        currentStep: nextStep.key,
+        ...(isDraft ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null, ...gdocData } : {}),
+      },
+      include: includeWorkflow(),
     });
     return NextResponse.json(updated);
   }
 
-  const ordered = workflowSteps.map((s) => workflow!.steps.find((st) => st.key === s.key)).filter(Boolean) as WorkflowStep[];
-  const nextStep = ordered.find((st) => !hasOutput(st))!;
-
-  const { output, usage } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
-    media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, steps: workflow.steps as WorkflowStep[],
-  });
-  await reportAiCompanyUsage(email, usage);
-  await prisma.workflowStep.update({
-    where: { workflowId_key: { workflowId, key: nextStep.key } },
-    data: { status: "done", output: output as never },
-  });
-
-  // 再取得してゲート再判定
-  workflow = await prisma.contentWorkflow.findUnique({ where: { id: workflowId }, include: includeWorkflow() });
-  const g2 = gate(workflow!);
-  const isDraft = nextStep.key === "draft_article";
-  let gdocData: { gdocId?: string; gdocUrl?: string } = {};
-  if (isDraft) {
-    // 執筆完了時にGoogleドキュメントへ保存（既存があれば上書き）
-    const title = (output as { title?: string }).title ?? workflow!.selectedArticle ?? "SEO記事";
-    const body = (output as { body?: string }).body ?? "";
-    const doc = await saveGoogleDoc(workflow!.gdocId, title, body);
-    if (doc) gdocData = { gdocId: doc.docId, gdocUrl: doc.url };
+  // 全AIステップ完了 → WordPressへ自動下書き保存（画像生成込み）
+  const media = workflow.media;
+  if (media.wpUrl && media.wpSecret && !workflow.wpPostId) {
+    const swell = workflow.steps.find((s) => s.key === "swell_format");
+    const swellOut = (swell?.output ?? {}) as { html?: string; title?: string };
+    const baseHtml = swellOut.html ?? workflow.finalArticle ?? "";
+    const title = workflow.finalArticleTitle ?? swellOut.title ?? workflow.selectedArticle ?? "記事";
+    try {
+      if (!baseHtml) throw new Error("保存する本文がありません");
+      const draft = await wpUpsertPost(media.wpUrl, media.wpSecret, { title, content: baseHtml, status: "draft" });
+      const built = await buildHtmlWithImages(workflow, media.wpUrl, media.wpSecret, baseHtml, draft.postId);
+      const result = await wpUpsertPost(media.wpUrl, media.wpSecret, { title, content: built.html, status: "draft", postId: draft.postId });
+      const updated = await prisma.contentWorkflow.update({
+        where: { id: workflowId },
+        data: {
+          status: "completed",
+          wpPostId: result.postId,
+          wpEditLink: result.editLink,
+          wpViewLink: result.viewLink,
+          finalHtml: built.html,
+          imagesGenerated: built.count > 0,
+        },
+        include: includeWorkflow(),
+      });
+      return NextResponse.json(updated);
+    } catch {
+      // WP保存に失敗しても記事は保持し完了扱い（手動で「WordPress下書き保存」から再試行可能）
+      const updated = await prisma.contentWorkflow.update({
+        where: { id: workflowId }, data: { status: "completed" }, include: includeWorkflow(),
+      });
+      return NextResponse.json(updated);
+    }
   }
-  const updated = await prisma.contentWorkflow.update({
-    where: { id: workflowId },
-    data: {
-      status: storedStatus(g2),
-      currentStep: nextStep.key,
-      ...(isDraft ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null, ...gdocData } : {}),
-    },
-    include: includeWorkflow(),
+
+  // WP未接続 or 既に保存済み → 完了
+  const done = await prisma.contentWorkflow.update({
+    where: { id: workflowId }, data: { status: "completed" }, include: includeWorkflow(),
   });
-  return NextResponse.json(updated);
+  return NextResponse.json(done);
 }
 
 // DELETE

@@ -229,17 +229,6 @@ export default function PipelinePage() {
     }
   }
 
-  async function approveGate(gate: 1 | 2) {
-    if (!workflow || running) return;
-    setRunning(true);
-    try {
-      const r = await fetch("/api/pipeline", {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflowId: workflow.id, action: "approve", gate }),
-      });
-      if (r.ok) { const wf = (await r.json()) as Workflow; setWorkflow(wf); await drive(wf); }
-    } finally { setRunning(false); }
-  }
 
   async function rejectDraft() {
     if (!workflow || running) return;
@@ -531,7 +520,7 @@ export default function PipelinePage() {
             </div>
           ) : (
             <div className="space-y-3">
-              <StatusBanner workflow={workflow} running={running} onApprove={approveGate} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
+              <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
 
               {STEP_ORDER.map((key) => {
                 const step = workflow.steps.find((s) => s.key === key);
@@ -600,9 +589,8 @@ export default function PipelinePage() {
 }
 
 // ── 段階実行：通知＋人間アクション ──
-function StatusBanner({ workflow, running, onApprove, onWp, onReject, onCancel }: {
+function StatusBanner({ workflow, running, onWp, onReject, onCancel }: {
   workflow: Workflow; running: boolean;
-  onApprove: (g: 1 | 2) => void;
   onWp: (a: "wp_draft" | "wp_publish") => void;
   onReject: () => void; onCancel: () => void;
 }) {
@@ -612,101 +600,68 @@ function StatusBanner({ workflow, running, onApprove, onWp, onReject, onCancel }
     return (
       <div className="rounded-xl px-4 py-3 flex items-center gap-2" style={{ background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)" }}>
         <Loader2 size={15} className="animate-spin" style={{ color: "var(--blue)" }} />
-        <p className="text-xs font-bold" style={{ color: "var(--blue)" }}>AIが自動生成中…</p>
-      </div>
-    );
-  }
-
-  if (s === "awaiting_approval_1") {
-    return (
-      <div className="rounded-xl p-4" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.35)" }}>
-        <div className="flex items-center gap-2 mb-1">
-          <Check size={16} style={{ color: "#34d399" }} />
-          <p className="text-xs font-bold" style={{ color: "#34d399" }}>✅ 記事の執筆が完了しました</p>
+        <div>
+          <p className="text-xs font-bold" style={{ color: "var(--blue)" }}>AIが自動生成中…</p>
+          <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>分析→執筆→画像生成→WordPress下書き保存まで自動で進みます（1〜3分）</p>
         </div>
-        <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
-          内容を確認してください。承認するとHTML整形・画像準備へ進みます。差戻すと指示を反映して再執筆します。
-        </p>
-        {workflow.gdocUrl && (
-          <a href={workflow.gdocUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-[10px] font-bold mb-2.5" style={{ color: "var(--cyan)" }}>
-            📄 Googleドキュメントで確認 ↗
-          </a>
-        )}
-        <div className="flex gap-2">
-          <button disabled={running} onClick={() => onApprove(1)} className="cyber-btn-primary px-4 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40">
-            {running ? <Loader2 size={13} className="animate-spin" /> : "承認して次へ"}
-          </button>
-          <button disabled={running} onClick={onReject} className="px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40"
-            style={{ background: "rgba(251,146,60,0.12)", border: "1px solid rgba(251,146,60,0.4)", color: "#fb923c" }}>
-            差戻して再執筆
-          </button>
-          <button disabled={running} onClick={onCancel} className="px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40"
-            style={{ background: "transparent", border: "1px solid rgba(248,113,113,0.3)", color: "rgba(248,113,113,0.85)" }}>
-            取消
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (s === "awaiting_approval_2") {
-    const wpConnected = Boolean(workflow.media.wpUrl);
-    const saved = Boolean(workflow.wpPostId);
-    return (
-      <div className="rounded-xl p-4" style={{ background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.35)" }}>
-        <div className="flex items-center gap-2 mb-2">
-          <Sparkles size={16} style={{ color: "#a78bfa" }} />
-          <p className="text-xs font-bold" style={{ color: "#a78bfa" }}>🎉 記事が完成しました（SWELL最適化HTML）</p>
-        </div>
-        {!wpConnected ? (
-          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            WordPressに保存するには、左の「WordPress接続」からこのメディアの接続を設定してください。
-          </p>
-        ) : !saved ? (
-          <>
-            <p className="text-[10px] mb-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              確認OKなら、WordPressに下書き保存します。保存時に本文の画像箇所へ <b>gpt-image-1で画像を生成・挿入</b>します（1〜2分かかることがあります）。
-            </p>
-            <button disabled={running} onClick={() => onWp("wp_draft")} className="px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40"
-              style={{ background: "rgba(167,139,250,0.18)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}>
-              {running ? <><Loader2 size={13} className="animate-spin inline" /> 画像生成＆保存中…</> : "画像生成してWordPress下書き保存"}
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
-              下書き保存済み{workflow.imagesGenerated ? "（画像を生成・挿入しました）" : ""}。WordPressで内容を確認 → 問題なければ公開してください。
-              {workflow.wpEditLink && <> <a href={workflow.wpEditLink} target="_blank" rel="noopener noreferrer" style={{ color: "var(--cyan)" }}>編集を開く ↗</a></>}
-            </p>
-            <div className="flex gap-2">
-              <button disabled={running} onClick={() => onWp("wp_draft")} className="px-3 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40"
-                style={{ background: "transparent", border: "1px solid rgba(167,139,250,0.4)", color: "#a78bfa" }}>
-                下書きを更新
-              </button>
-              <button disabled={running} onClick={() => onWp("wp_publish")} className="cyber-btn-primary px-4 py-2 rounded-lg text-[11px] font-bold disabled:opacity-40">
-                {running ? <Loader2 size={13} className="animate-spin" /> : "公開する"}
-              </button>
-            </div>
-          </>
-        )}
       </div>
     );
   }
 
   if (s === "completed") {
+    const wpConnected = Boolean(workflow.media.wpUrl);
+    const saved = Boolean(workflow.wpPostId);
     return (
-      <div className="rounded-xl px-4 py-3" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.3)" }}>
-        <div className="flex items-center gap-2">
-          <Check size={15} style={{ color: "#34d399" }} />
+      <div className="rounded-xl p-4" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.3)" }}>
+        <div className="flex items-center gap-2 mb-1.5">
+          <Check size={16} style={{ color: "#34d399" }} />
           <p className="text-xs font-bold" style={{ color: "#34d399" }}>
-            {workflow.wpPublished ? "✅ WordPressに公開しました" : "完了"}
+            {workflow.wpPublished ? "✅ WordPressに公開しました"
+              : saved ? "✅ WordPress下書き保存完了" : "🎉 記事が完成しました"}
           </p>
         </div>
-        {workflow.wpViewLink && (
-          <a href={workflow.wpViewLink} target="_blank" rel="noopener noreferrer" className="text-[10px] mt-1 inline-block" style={{ color: "var(--cyan)" }}>
-            公開ページを開く ↗
-          </a>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2.5">
+          {workflow.gdocUrl && (
+            <a href={workflow.gdocUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold" style={{ color: "var(--cyan)" }}>📄 Googleドキュメント ↗</a>
+          )}
+          {saved && workflow.wpEditLink && (
+            <a href={workflow.wpEditLink} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold" style={{ color: "var(--cyan)" }}>📝 WordPress編集 ↗</a>
+          )}
+          {workflow.wpPublished && workflow.wpViewLink && (
+            <a href={workflow.wpViewLink} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold" style={{ color: "#34d399" }}>🌐 公開ページ ↗</a>
+          )}
+          {saved && workflow.imagesGenerated && (
+            <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>画像を生成・挿入済み</span>
+          )}
+        </div>
+
+        {!wpConnected && (
+          <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
+            WordPressに自動保存するには、左の「WordPress接続」を設定してください。
+          </p>
         )}
+
+        <div className="flex flex-wrap gap-2">
+          {wpConnected && !saved && (
+            <button disabled={running} onClick={() => onWp("wp_draft")} className="cyber-btn-primary px-3 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40">
+              {running ? <><Loader2 size={12} className="animate-spin inline" /> 保存中…</> : "WordPress下書き保存（画像生成）"}
+            </button>
+          )}
+          {saved && !workflow.wpPublished && (
+            <button disabled={running} onClick={() => onWp("wp_publish")} className="cyber-btn-primary px-4 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40">
+              {running ? <Loader2 size={12} className="animate-spin" /> : "公開する"}
+            </button>
+          )}
+          <button disabled={running} onClick={onReject} className="px-3 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40"
+            style={{ background: "rgba(251,146,60,0.12)", border: "1px solid rgba(251,146,60,0.4)", color: "#fb923c" }}>
+            記事を再執筆
+          </button>
+          <button disabled={running} onClick={onCancel} className="px-3 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40"
+            style={{ background: "transparent", border: "1px solid rgba(248,113,113,0.3)", color: "rgba(248,113,113,0.85)" }}>
+            削除
+          </button>
+        </div>
       </div>
     );
   }
