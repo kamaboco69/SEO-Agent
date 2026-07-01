@@ -214,6 +214,8 @@ export default function PipelinePage() {
       const active = STEP_ORDER.find((k) => !hasOutput(wf.steps.find((s) => s.key === k)));
       if (active) setExpanded(active);
     }
+    // 完了したらアコーディオンは全て閉じる
+    if (wf.status === "completed") setExpanded(null);
     loadHistory(selectedMediaId);
     recheckEntitlement();
     return wf;
@@ -302,7 +304,8 @@ export default function PipelinePage() {
     if (res.ok) {
       const wf = (await res.json()) as Workflow;
       setWorkflow(wf);
-      setExpanded("draft_article");
+      // 完了済みは閉じた状態で開く。実行中は執筆ステップを開いておく
+      setExpanded(wf.status === "completed" ? null : "draft_article");
       if (wf.status === "in_progress" && !running) {
         setRunning(true);
         try { await drive(wf); } finally { setRunning(false); }
@@ -550,7 +553,10 @@ export default function PipelinePage() {
             <FlowOverview canRun={Boolean(entitlement?.entitled)} />
           ) : (
             <div className="space-y-3">
-              <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
+              {/* 生成中は進捗を上部に。完了バナーは一番下に置く（上→下の流れの最後にする） */}
+              {workflow.status !== "completed" && (
+                <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
+              )}
 
               {STEP_ORDER.map((key) => {
                 const step = workflow.steps.find((s) => s.key === key);
@@ -611,6 +617,11 @@ export default function PipelinePage() {
                   </div>
                   <pre className="p-4 text-[12px] leading-relaxed whitespace-pre-wrap" style={{ color: "var(--text)", fontFamily: "inherit", maxHeight: "60vh", overflow: "auto" }}>{finalArticle}</pre>
                 </div>
+              )}
+
+              {/* 完了バナー＋操作（プレビュー/公開/再執筆/削除）は最下部 */}
+              {workflow.status === "completed" && (
+                <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
               )}
             </div>
           )}
