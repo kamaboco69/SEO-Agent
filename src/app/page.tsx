@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
-  Globe, ChevronDown, Lock, Crown, ExternalLink, Code2, Image as ImageIcon, Eye,
+  Globe, ChevronDown, ChevronRight, Lock, Crown, ExternalLink, Code2,
+  Image as ImageIcon, Eye, Rocket, MousePointerClick,
 } from "lucide-react";
 
 interface Entitlement {
@@ -522,13 +523,7 @@ export default function PipelinePage() {
         {/* Right: pipeline steps + article */}
         <div className="min-h-0 overflow-y-auto pr-1">
           {!workflow ? (
-            <div className="glass-static rounded-xl h-full flex flex-col items-center justify-center text-center px-8">
-              <Sparkles size={40} style={{ color: "rgba(52,211,153,0.3)" }} />
-              <p className="text-base font-bold mt-4" style={{ color: "var(--text)" }}>メディアを選んで「一気通貫で実行」</p>
-              <p className="text-xs mt-2 max-w-md leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                メディア分析で不足している記事を特定し、KW調査・競合調査・構成設計・SEO要件・記事執筆までをAIが連続実行します。
-              </p>
-            </div>
+            <FlowOverview canRun={Boolean(entitlement?.entitled)} />
           ) : (
             <div className="space-y-3">
               <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
@@ -595,6 +590,125 @@ export default function PipelinePage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── 実行前：初めから制作までの流れ ──
+const FLOW_STAGES: {
+  no: string; title: string; color: string;
+  steps: { icon: typeof Search; label: string; note?: string }[];
+}[] = [
+  {
+    no: "1", title: "メディア分析・調査", color: "#34d399",
+    steps: [
+      { icon: FileSearch, label: "メディア分析", note: "サイトを解析し不足記事を特定" },
+      { icon: Search, label: "記事キーワード調査" },
+      { icon: Users, label: "競合調査" },
+      { icon: Tag, label: "勝てるテールKW洗い出し" },
+      { icon: Users, label: "テールKWで競合調査" },
+    ],
+  },
+  {
+    no: "2", title: "構成・執筆", color: "#fb923c",
+    steps: [
+      { icon: ListTree, label: "勝てる記事構成の設計" },
+      { icon: SlidersHorizontal, label: "文字数・内部/外部リンク要件" },
+      { icon: PenLine, label: "AIが記事を執筆", note: "Googleドキュメントにも保存" },
+      { icon: Code2, label: "WordPress装飾HTML整形", note: "吹き出し・表・マーカー等をインラインCSSで" },
+    ],
+  },
+  {
+    no: "3", title: "画像・入稿・公開", color: "#f472b6",
+    steps: [
+      { icon: ImageIcon, label: "画像生成プロンプト付与" },
+      { icon: Sparkles, label: "画像を自動生成・挿入", note: "gpt-image-1" },
+      { icon: Globe, label: "WordPressに下書き保存" },
+      { icon: Rocket, label: "内容を確認して公開", note: "ワンクリック" },
+    ],
+  },
+];
+
+function FlowOverview({ canRun }: { canRun: boolean }) {
+  return (
+    <div className="glass-static rounded-xl h-full flex flex-col p-6 overflow-y-auto">
+      <div className="text-center shrink-0">
+        <div className="inline-flex w-12 h-12 rounded-xl items-center justify-center mb-3"
+          style={{ background: "linear-gradient(135deg, rgba(52,211,153,0.25), rgba(34,211,238,0.25))", border: "1px solid rgba(52,211,153,0.4)" }}>
+          <Sparkles size={22} style={{ color: "#34d399" }} />
+        </div>
+        <p className="text-lg font-bold" style={{ color: "var(--text)" }}>メディア分析 → 記事制作 → 公開までの流れ</p>
+        <p className="text-xs mt-1.5 max-w-xl mx-auto leading-relaxed" style={{ color: "var(--text-muted)" }}>
+          左でメディアを選んで<b style={{ color: "#34d399" }}>「一気通貫で実行」</b>を押すと、以下の工程をAIが最後まで自動で進めます。
+        </p>
+      </div>
+
+      {/* 起点 */}
+      <div className="mt-5 flex items-center justify-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)" }}>
+          <MousePointerClick size={14} style={{ color: "var(--cyan)" }} />
+          <span className="text-[11px] font-bold" style={{ color: "var(--text)" }}>メディアを選択して実行</span>
+        </div>
+      </div>
+
+      <div className="flex justify-center py-1 shrink-0">
+        <ChevronDown size={16} style={{ color: "rgba(52,211,153,0.5)" }} />
+      </div>
+
+      {/* 3ステージ */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto_1fr] gap-3 items-stretch">
+        {FLOW_STAGES.map((stage, si) => (
+          <div key={stage.no} className="contents">
+            <div className="rounded-xl p-3.5 flex flex-col" style={{ background: `${stage.color}0d`, border: `1px solid ${stage.color}33` }}>
+              <div className="flex items-center gap-2 mb-2.5">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0"
+                  style={{ background: stage.color, color: "#0a0e14" }}>{stage.no}</span>
+                <p className="text-[12px] font-bold" style={{ color: stage.color }}>{stage.title}</p>
+              </div>
+              <div className="space-y-1.5 flex-1">
+                {stage.steps.map((step, i) => {
+                  const Icon = step.icon;
+                  return (
+                    <div key={i} className="flex items-start gap-2 rounded-lg px-2.5 py-2"
+                      style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 mt-0.5"
+                        style={{ background: `${stage.color}1a`, border: `1px solid ${stage.color}40` }}>
+                        <Icon size={12} style={{ color: stage.color }} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold leading-tight" style={{ color: "var(--text)" }}>{step.label}</p>
+                        {step.note && <p className="text-[9px] mt-0.5 leading-tight" style={{ color: "var(--text-muted)" }}>{step.note}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {si < FLOW_STAGES.length - 1 && (
+              <div className="hidden lg:flex items-center justify-center">
+                <ChevronRight size={20} style={{ color: "rgba(52,211,153,0.4)" }} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* 完了 */}
+      <div className="flex justify-center py-1 shrink-0">
+        <ChevronDown size={16} style={{ color: "rgba(52,211,153,0.5)" }} />
+      </div>
+      <div className="flex items-center justify-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 rounded-full px-4 py-2" style={{ background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.35)" }}>
+          <Check size={14} style={{ color: "#34d399" }} />
+          <span className="text-[11px] font-bold" style={{ color: "#34d399" }}>画像付き記事がWordPressに入稿・公開</span>
+        </div>
+      </div>
+
+      <p className="text-center text-[10px] mt-4 shrink-0" style={{ color: "var(--text-muted)" }}>
+        {canRun
+          ? "各工程は完了後に個別で修正・再生成もできます。プレビューで見た目を確認してから公開できます。"
+          : "※ 一気通貫の自動生成はAICompanyの有料プラン契約者のみご利用いただけます。"}
+      </p>
     </div>
   );
 }
