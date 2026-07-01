@@ -69,17 +69,29 @@ export async function GET(req: NextRequest) {
 
   const res = NextResponse.redirect(new URL(redirect, origin), 302);
   const isProd = process.env.NODE_ENV === "production";
-  // iframe（サードパーティ文脈）でCookieを保存/送信するため、本番は
-  // SameSite=None; Secure に加えて Partitioned（CHIPS）を付与する。
-  // CHIPS はトップサイト単位で分離保存され、サードパーティCookie制限下でも
-  // 埋め込みiframe内の自動ログインを成立させる（Chrome/Edge等）。
-  res.cookies.set(sessionCookieName, session.rawToken, {
-    httpOnly: true,
-    sameSite: isProd ? "none" : "lax",
-    secure: isProd,
-    path: "/",
-    expires: session.expiresAt,
-    ...(isProd ? { partitioned: true } : {}),
-  });
+  if (isProd) {
+    // iframe（サードパーティ文脈）でCookieを保存/送信するため、SameSite=None; Secure に加えて
+    // Partitioned（CHIPS）を確実に付与する。Next の cookies.set が Partitioned を
+    // 出力しない場合に備え、Set-Cookie ヘッダを手動生成して確実に属性を載せる。
+    const maxAge = Math.max(0, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000));
+    const cookie = [
+      `${sessionCookieName}=${session.rawToken}`,
+      "Path=/",
+      "HttpOnly",
+      "Secure",
+      "SameSite=None",
+      "Partitioned",
+      `Expires=${session.expiresAt.toUTCString()}`,
+      `Max-Age=${maxAge}`,
+    ].join("; ");
+    res.headers.append("Set-Cookie", cookie);
+  } else {
+    res.cookies.set(sessionCookieName, session.rawToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      expires: session.expiresAt,
+    });
+  }
   return res;
 }
