@@ -69,13 +69,17 @@ export async function GET(req: NextRequest) {
 
   const res = NextResponse.redirect(new URL(redirect, origin), 302);
   const isProd = process.env.NODE_ENV === "production";
-  // iframe（サードパーティ文脈）でCookieを送るため本番は SameSite=None; Secure
+  // iframe（サードパーティ文脈）でCookieを保存/送信するため、本番は
+  // SameSite=None; Secure に加えて Partitioned（CHIPS）を付与する。
+  // CHIPS はトップサイト単位で分離保存され、サードパーティCookie制限下でも
+  // 埋め込みiframe内の自動ログインを成立させる（Chrome/Edge等）。
   res.cookies.set(sessionCookieName, session.rawToken, {
     httpOnly: true,
     sameSite: isProd ? "none" : "lax",
     secure: isProd,
     path: "/",
     expires: session.expiresAt,
+    ...(isProd ? { partitioned: true } : {}),
   });
   return res;
 }
