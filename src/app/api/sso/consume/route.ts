@@ -4,27 +4,22 @@ import { createSession, sessionCookieName, upsertUserFromIdentity } from "@/lib/
 
 export const dynamic = "force-dynamic";
 
-// 埋め込み用SSOエントリ（AI Companyの「SEO対策」iframeから遷移）。
-// ?token（AI Companyがワンタイム署名）を検証 → 同一emailのAI Companyプロフィールを取得 →
-// SEO Agentユーザーへupsert → セッション発行 → ?redirect（既定 "/"）へ。
-export async function GET(req: NextRequest) {
-  const origin = req.nextUrl.origin;
-  const token = req.nextUrl.searchParams.get("token");
-  const rawRedirect = req.nextUrl.searchParams.get("redirect") || "/";
+// /sso ページから同一オリジンで呼ばれ、ワンタイムトークンを検証してセッションを確立する。
+// Set-Cookie は同一オリジン応答として返るため、埋め込みiframe（third-party文脈）でも
+// Partitioned(CHIPS) 付きなら保存される（クロスサイトのリダイレクトで立てるより確実）。
+export async function POST(req: NextRequest) {
+  const body = (await req.json().catch(() => ({}))) as { token?: string; redirect?: string };
+  const token = typeof body.token === "string" ? body.token : null;
+  const rawRedirect = typeof body.redirect === "string" ? body.redirect : "/";
   // オープンリダイレクト防止：相対パスのみ許可
   const redirect = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
 
   const payload = verifySsoToken(token);
-  if (!payload) {
-    return NextResponse.redirect(new URL("/login?error=sso_token", origin), 302);
-  }
+  if (!payload) return NextResponse.json({ ok: false, error: "invalid_token" }, { status: 401 });
 
-  // AI Company のプロフィール（entitlement=マハル雇用含む）を取得
   const profileUrl = process.env.AI_COMPANY_PROFILE_URL;
   const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
-  if (!profileUrl) {
-    return NextResponse.redirect(new URL("/login?error=aicompany_unconfigured", origin), 302);
-  }
+  if (!profileUrl) return NextResponse.json({ ok: false, error: "unconfigured" }, { status: 503 });
 
   type AiCompanyProfile = {
     ok?: boolean; found?: boolean; aiCompanyId?: string; email?: string; name?: string | null;
@@ -34,18 +29,18 @@ export async function GET(req: NextRequest) {
   };
   let data: AiCompanyProfile | null = null;
   try {
-    const res = await fetch(profileUrl, {
+    const r = await fetch(profileUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(secret ? { "x-ai-company-secret": secret } : {}) },
       body: JSON.stringify({ email: payload.email, source: "seo-agent" }),
     });
-    data = (await res.json().catch(() => null)) as AiCompanyProfile | null;
+    data = (await r.json().catch(() => null)) as AiCompanyProfile | null;
   } catch {
     data = null;
   }
 
   if (!data?.ok || !data.found || !data.aiCompanyId) {
-    return NextResponse.redirect(new URL("/login?error=aicompany_not_found", origin), 302);
+    return NextResponse.json({ ok: false, error: "aicompany_not_found" }, { status: 404 });
   }
 
   const user = await upsertUserFromIdentity({
@@ -67,12 +62,10 @@ export async function GET(req: NextRequest) {
 
   const session = await createSession(user.id);
 
-  const res = NextResponse.redirect(new URL(redirect, origin), 302);
+  const res = NextResponse.json({ ok: true, redirect });
   const isProd = process.env.NODE_ENV === "production";
   if (isProd) {
-    // iframe（サードパーティ文脈）でCookieを保存/送信するため、SameSite=None; Secure に加えて
-    // Partitioned（CHIPS）を確実に付与する。Next の cookies.set が Partitioned を
-    // 出力しない場合に備え、Set-Cookie ヘッダを手動生成して確実に属性を載せる。
+    // SameSite=None; Secure; Partitioned(CHIPS) を確実に付与（Next の cookies.set に依存しない）
     const maxAge = Math.max(0, Math.floor((session.expiresAt.getTime() - Date.now()) / 1000));
     const cookie = [
       `${sessionCookieName}=${session.rawToken}`,
