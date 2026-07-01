@@ -9,7 +9,7 @@ export const workflowSteps = [
   { key: "article_outline", label: "勝てる記事構成提案" },
   { key: "seo_requirements", label: "文字数・内部リンク・外部リンク提案" },
   { key: "draft_article", label: "記事執筆" },
-  { key: "swell_format", label: "SWELL最適化HTML整形＋画像挿入コメント" },
+  { key: "swell_format", label: "WordPress装飾HTML整形＋画像挿入コメント" },
   { key: "image_prompts", label: "画像生成プロンプト付与" },
 ] as const;
 

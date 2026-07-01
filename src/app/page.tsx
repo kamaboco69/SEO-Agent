@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
-  Globe, ChevronDown, Lock, Crown, ExternalLink, Code2, Image as ImageIcon,
+  Globe, ChevronDown, Lock, Crown, ExternalLink, Code2, Image as ImageIcon, Eye,
 } from "lucide-react";
 
 interface Entitlement {
@@ -51,6 +51,7 @@ interface Workflow {
   wpViewLink: string | null;
   wpPublished: boolean;
   imagesGenerated: boolean;
+  finalHtml: string | null;
   gdocId: string | null;
   gdocUrl: string | null;
   media: MediaItem;
@@ -66,7 +67,7 @@ const STEP_META: Record<string, { icon: typeof Search; color: string; short: str
   article_outline:          { icon: ListTree,          color: "#fb923c", short: "記事構成" },
   seo_requirements:         { icon: SlidersHorizontal, color: "#facc15", short: "SEO要件" },
   draft_article:            { icon: PenLine,           color: "#34d399", short: "記事執筆" },
-  swell_format:             { icon: Code2,             color: "#38bdf8", short: "SWELL HTML整形" },
+  swell_format:             { icon: Code2,             color: "#38bdf8", short: "WordPress装飾HTML整形" },
   image_prompts:            { icon: ImageIcon,         color: "#f472b6", short: "画像プロンプト" },
 };
 
@@ -78,6 +79,16 @@ const STEP_ORDER = [
 
 function hasOutput(step?: Step) {
   return Boolean(step && step.output && Object.keys(step.output).length > 0);
+}
+
+// 装飾HTMLを別ウィンドウでレンダリングしてプレビュー
+function openPreview(html: string, title = "プレビュー") {
+  const w = window.open("", "_blank", "width=840,height=920");
+  if (!w) { alert("ポップアップがブロックされました。ブラウザでポップアップを許可してください。"); return; }
+  const doc = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>img{max-width:100%;height:auto}body{max-width:760px;margin:24px auto;padding:0 18px;font-family:-apple-system,'Segoe UI',Meiryo,sans-serif;line-height:1.9;color:#1a202c;background:#fff}</style></head><body>${html}</body></html>`;
+  w.document.open();
+  w.document.write(doc);
+  w.document.close();
 }
 
 const HISTORY_STATUS: Record<string, string> = {
@@ -611,6 +622,8 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel }: {
   if (s === "completed") {
     const wpConnected = Boolean(workflow.media.wpUrl);
     const saved = Boolean(workflow.wpPostId);
+    const swellHtml = ((workflow.steps.find((st) => st.key === "swell_format")?.output ?? {}) as { html?: string }).html ?? "";
+    const previewHtml = workflow.finalHtml || swellHtml;
     return (
       <div className="rounded-xl p-4" style={{ background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.3)" }}>
         <div className="flex items-center gap-2 mb-1.5">
@@ -643,8 +656,14 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel }: {
         )}
 
         <div className="flex flex-wrap gap-2">
+          {previewHtml && (
+            <button onClick={() => openPreview(previewHtml, workflow.finalArticleTitle ?? "プレビュー")} className="cyber-btn-primary px-4 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5">
+              <Eye size={13} /> プレビュー
+            </button>
+          )}
           {wpConnected && !saved && (
-            <button disabled={running} onClick={() => onWp("wp_draft")} className="cyber-btn-primary px-3 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40">
+            <button disabled={running} onClick={() => onWp("wp_draft")} className="px-3 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40"
+              style={{ background: "rgba(167,139,250,0.18)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}>
               {running ? <><Loader2 size={12} className="animate-spin inline" /> 保存中…</> : "WordPress下書き保存（画像生成）"}
             </button>
           )}
@@ -798,7 +817,14 @@ function StepOutput({ stepKey, output }: { stepKey: string; output: Record<strin
     const comments = (o.imageComments as string[]) ?? [];
     return (
       <div className="space-y-2">
-        {o.title != null && <p className="text-[12px] font-bold" style={txt}>{String(o.title)}</p>}
+        <div className="flex items-center justify-between gap-2">
+          {o.title != null && <p className="text-[12px] font-bold" style={txt}>{String(o.title)}</p>}
+          {html && (
+            <button onClick={() => openPreview(html, String(o.title ?? "プレビュー"))} className="cyber-btn flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0">
+              <Eye size={11} /> プレビュー
+            </button>
+          )}
+        </div>
         {comments.length > 0 && (
           <p className="text-[9px]" style={muted}>画像挿入コメント: {comments.length}箇所</p>
         )}

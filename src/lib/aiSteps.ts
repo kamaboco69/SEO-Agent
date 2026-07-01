@@ -169,15 +169,32 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
   },
   swell_format: {
     model: WRITING_MODEL,
-    task: `直前の記事(draft_article)を、WordPressのSWELLテーマに最適化したHTMLに変換してください。要件:
-- 見出しは<h2>/<h3>。SWELLで見やすいよう、重要箇所はインラインCSSで装飾する(マーカー風の背景ハイライト、枠付きボックス、ポイントリスト等)。CSSは必ずstyle属性のインラインで記述(外部CSS/<style>タグ不可)。
-- 読者が飽きないよう、要点ボックス・注意ボックス・チェックリストなどの装飾を適度に挿入。
-- 画像を入れるべき箇所に、HTMLコメントで <!-- IMAGE: 画像の内容説明 --> を挿入(アイキャッチ含め2〜5箇所)。各コメントのテキストは後で画像生成プロンプトに使う。
-- htmlにはbody内のHTMLのみ(<html>/<head>不要)。`,
+    task: `直前の記事(draft_article)を、どのWordPressテーマでもそのまま貼れる「装飾済みHTML」に変換してください。読者が視覚的に理解しやすく、飽きずに読める記事にするのが目的です。
+
+# 厳守ルール
+- CSSは必ず style 属性のインラインのみ。<style>タグ・外部CSS・classやid・JavaScriptは禁止（テーマ非依存にするため）。
+- htmlは body内に貼るHTMLのみ（<html>/<head>不要）。
+- 見出しは<h2>/<h3>。長い段落は避け、箇条書き・表・装飾で読みやすく分割する。
+- 画像を入れる箇所に <!-- IMAGE: 画像の内容説明 --> を2〜5箇所（アイキャッチ含む）。
+
+# 記事内容に応じて以下の装飾を適切に使う（インラインCSS例をそのまま流用可）
+- 見出しh2: <h2 style="border-left:6px solid #2b6cb0;padding:.4em .6em;background:#f2f7fc;font-size:1.4em;">…</h2>
+- 見出しh3: <h3 style="border-bottom:2px solid #cbd5e0;padding-bottom:.2em;">…</h3>
+- マーカー(重要語): <span style="background:linear-gradient(transparent 60%,#fff3a0 60%);font-weight:700;">…</span>
+- 赤文字強調: <strong style="color:#e3342f;">…</strong>
+- 太字: <strong>…</strong>
+- ポイント吹き出し: <div style="position:relative;margin:1.4em 0;padding:14px 16px 14px 56px;background:#eef6ff;border:1px solid #b6d4f2;border-radius:10px;"><span style="position:absolute;left:12px;top:12px;width:32px;height:32px;border-radius:50%;background:#2b6cb0;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;">P</span>…吹き出しの内容…</div>
+- 注意ボックス: <div style="margin:1.4em 0;padding:12px 16px;background:#fff5f5;border-left:5px solid #e3342f;border-radius:6px;"><strong style="color:#e3342f;">⚠ 注意</strong><br>…</div>
+- ポイントボックス: <div style="margin:1.4em 0;padding:12px 16px;background:#f0fff4;border-left:5px solid #38a169;border-radius:6px;"><strong style="color:#2f855a;">✓ ポイント</strong><br>…</div>
+- 表: <table style="border-collapse:collapse;width:100%;margin:1.4em 0;font-size:.95em;"><thead><tr><th style="border:1px solid #cbd5e0;padding:8px;background:#2b6cb0;color:#fff;">項目</th><th style="border:1px solid #cbd5e0;padding:8px;background:#2b6cb0;color:#fff;">内容</th></tr></thead><tbody><tr><td style="border:1px solid #cbd5e0;padding:8px;background:#fff;">…</td><td style="border:1px solid #cbd5e0;padding:8px;background:#fff;">…</td></tr><tr><td style="border:1px solid #cbd5e0;padding:8px;background:#f7fafc;">…</td><td style="border:1px solid #cbd5e0;padding:8px;background:#f7fafc;">…</td></tr></tbody></table>
+- 簡易横棒グラフ(数値比較がある場合): <div style="margin:1.2em 0;"><div style="margin:6px 0;"><span style="display:inline-block;width:120px;">項目A</span><span style="display:inline-block;height:16px;width:70%;background:#2b6cb0;border-radius:3px;vertical-align:middle;"></span> 70%</div><div style="margin:6px 0;"><span style="display:inline-block;width:120px;">項目B</span><span style="display:inline-block;height:16px;width:40%;background:#63b3ed;border-radius:3px;vertical-align:middle;"></span> 40%</div></div>
+- チェックリスト: <ul style="list-style:none;padding-left:0;"><li style="padding:4px 0;">✅ …</li></ul>
+
+装飾は過剰にならないよう、要点・比較・注意点など効果的な箇所に絞って使うこと。`,
     schema: `{
   "title": "記事タイトル",
-  "format": "html-swell",
-  "html": "<h1>..</h1>\\n<!-- IMAGE: アイキャッチ.. -->\\n<p style=\\"..\\">..</p>",
+  "format": "html",
+  "html": "<h2 style=\\"..\\">..</h2>\\n<!-- IMAGE: アイキャッチ.. -->\\n<p>..<span style=\\"..\\">..</span>..</p>",
   "imageComments": ["アイキャッチの説明", "図解の説明"]
 }`,
   },
