@@ -50,6 +50,7 @@ interface Workflow {
   wpEditLink: string | null;
   wpViewLink: string | null;
   wpPublished: boolean;
+  imagesGenerated: boolean;
   gdocId: string | null;
   gdocUrl: string | null;
   media: MediaItem;
@@ -663,16 +664,18 @@ function StatusBanner({ workflow, running, onApprove, onWp, onReject, onCancel }
           </p>
         ) : !saved ? (
           <>
-            <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>確認OKなら、WordPressに下書き保存します。</p>
+            <p className="text-[10px] mb-2 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              確認OKなら、WordPressに下書き保存します。保存時に本文の画像箇所へ <b>gpt-image-1で画像を生成・挿入</b>します（1〜2分かかることがあります）。
+            </p>
             <button disabled={running} onClick={() => onWp("wp_draft")} className="px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40"
               style={{ background: "rgba(167,139,250,0.18)", border: "1px solid rgba(167,139,250,0.45)", color: "#a78bfa" }}>
-              {running ? <Loader2 size={13} className="animate-spin" /> : "WordPressに下書き保存"}
+              {running ? <><Loader2 size={13} className="animate-spin inline" /> 画像生成＆保存中…</> : "画像生成してWordPress下書き保存"}
             </button>
           </>
         ) : (
           <>
             <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
-              下書き保存済み。WordPressで内容を確認 → 問題なければ公開してください。
+              下書き保存済み{workflow.imagesGenerated ? "（画像を生成・挿入しました）" : ""}。WordPressで内容を確認 → 問題なければ公開してください。
               {workflow.wpEditLink && <> <a href={workflow.wpEditLink} target="_blank" rel="noopener noreferrer" style={{ color: "var(--cyan)" }}>編集を開く ↗</a></>}
             </p>
             <div className="flex gap-2">

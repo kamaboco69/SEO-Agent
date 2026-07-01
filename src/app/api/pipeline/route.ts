@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { workflowSteps, type WorkflowStepKey } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
 import { getAiCompanyEntitlement, getCurrentUser, reportAiCompanyUsage, saveGoogleDoc } from "@/lib/auth";
-import { wpUpsertPost } from "@/lib/wordpress";
+import { wpUpsertPost, wpUploadImage } from "@/lib/wordpress";
+import { generateImage, imageGenEnabled } from "@/lib/openaiImage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -46,6 +47,44 @@ function hasOutput(step: { output: unknown }) {
 }
 
 type WfWithSteps = ContentWorkflow & { steps: WorkflowStep[] };
+
+// SWELL HTML内の <!-- IMAGE: 説明 --> を、gpt-image-1生成→WordPressアップロード→<img>で置換する。
+async function buildHtmlWithImages(
+  workflow: WfWithSteps & { steps: WorkflowStep[] },
+  wpUrl: string,
+  secret: string,
+  baseHtml: string,
+  postId: number
+): Promise<{ html: string; count: number }> {
+  if (!imageGenEnabled()) return { html: baseHtml, count: 0 };
+
+  const ip = workflow.steps.find((s) => s.key === "image_prompts");
+  const images = ((ip?.output ?? {}) as { images?: { prompt?: string; comment?: string }[] }).images ?? [];
+
+  const commentRe = /<!--\s*IMAGE:\s*([\s\S]*?)-->/g;
+  const matches = [...baseHtml.matchAll(commentRe)].slice(0, 5); // 最大5枚
+  let html = baseHtml;
+  let count = 0;
+
+  for (let i = 0; i < matches.length; i++) {
+    const comment = matches[i][1].trim();
+    const prompt = images[i]?.prompt || `Clean, modern editorial illustration for a Japanese article. ${comment}. Flat design, soft colors, no text.`;
+    const img = await generateImage(prompt);
+    if (!img) continue;
+    const up = await wpUploadImage(wpUrl, secret, {
+      filename: `seo-${postId}-${i + 1}.png`,
+      base64: img.base64,
+      postId,
+      setFeatured: i === 0,
+    });
+    if (!up.url) continue;
+    const altText = comment.replace(/"/g, "");
+    const figure = `<figure style="margin:1.5em 0;text-align:center;"><img src="${up.url}" alt="${altText}" style="max-width:100%;height:auto;border-radius:8px;" /></figure>`;
+    html = html.replace(matches[i][0], figure);
+    count += 1;
+  }
+  return { html, count };
+}
 
 // 段階実行のゲート判定。次に何をすべきか（ステップ実行 or 人間アクション or 完了）。
 function gate(wf: WfWithSteps):
@@ -187,35 +226,44 @@ export async function PATCH(req: NextRequest) {
     }
     const swell = workflow.steps.find((s) => s.key === "swell_format");
     const swellOut = (swell?.output ?? {}) as { html?: string; title?: string };
-    const content = swellOut.html ?? workflow.finalArticle ?? "";
+    const baseHtml = swellOut.html ?? workflow.finalArticle ?? "";
     const title = workflow.finalArticleTitle ?? swellOut.title ?? workflow.selectedArticle ?? "記事";
-    if (!content) return NextResponse.json({ error: "保存する本文がありません" }, { status: 400 });
+    if (!baseHtml) return NextResponse.json({ error: "保存する本文がありません" }, { status: 400 });
 
-    const status = action === "wp_publish" ? "publish" : "draft";
-    let result;
     try {
-      result = await wpUpsertPost(media.wpUrl, media.wpSecret, {
-        title,
-        content,
-        status,
-        postId: workflow.wpPostId ?? undefined,
+      let finalHtml = workflow.finalHtml;
+      let wpPostId = workflow.wpPostId ?? undefined;
+      let imagesGenerated = workflow.imagesGenerated;
+
+      // 初回：下書き作成→画像生成→アップロード→挿入して最終HTMLを作る
+      if (!finalHtml) {
+        const draft = await wpUpsertPost(media.wpUrl, media.wpSecret, { title, content: baseHtml, status: "draft", postId: wpPostId });
+        wpPostId = draft.postId;
+        const built = await buildHtmlWithImages(workflow, media.wpUrl, media.wpSecret, baseHtml, wpPostId);
+        finalHtml = built.html;
+        imagesGenerated = built.count > 0;
+      }
+
+      const status = action === "wp_publish" ? "publish" : "draft";
+      const result = await wpUpsertPost(media.wpUrl, media.wpSecret, { title, content: finalHtml, status, postId: wpPostId });
+
+      const updated = await prisma.contentWorkflow.update({
+        where: { id: workflowId },
+        data: {
+          wpPostId: result.postId,
+          wpEditLink: result.editLink,
+          wpViewLink: result.viewLink,
+          finalHtml,
+          imagesGenerated,
+          wpPublished: action === "wp_publish" ? true : workflow.wpPublished,
+          ...(action === "wp_publish" ? { status: "completed", approved2: true } : {}),
+        },
+        include: includeWorkflow(),
       });
+      return NextResponse.json(updated);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "WordPress保存に失敗しました" }, { status: 502 });
     }
-
-    const updated = await prisma.contentWorkflow.update({
-      where: { id: workflowId },
-      data: {
-        wpPostId: result.postId,
-        wpEditLink: result.editLink,
-        wpViewLink: result.viewLink,
-        wpPublished: action === "wp_publish" ? true : workflow.wpPublished,
-        ...(action === "wp_publish" ? { status: "completed", approved2: true } : {}),
-      },
-      include: includeWorkflow(),
-    });
-    return NextResponse.json(updated);
   }
 
   // 修正再実行：指定ステップを revisionNote 付きで再生成
