@@ -128,6 +128,8 @@ export async function POST(req: NextRequest) {
   const mediaId = String(body.mediaId ?? "").trim();
   const instruction = String(body.instruction ?? "").trim() || "このメディアの検索流入を伸ばす記事を作る";
   const targetTheme = body.targetTheme ? String(body.targetTheme).trim() : null;
+  const rawWc = Number(body.targetWordCount);
+  const targetWordCount = Number.isFinite(rawWc) && rawWc > 0 ? Math.min(20000, Math.round(rawWc)) : null;
   if (!mediaId) return NextResponse.json({ error: "mediaId is required" }, { status: 400 });
 
   const pre = await reportAiCompanyUsage(email);
@@ -141,7 +143,7 @@ export async function POST(req: NextRequest) {
   const media = await prisma.media.findUnique({ where: { id: mediaId } });
   if (!media) return NextResponse.json({ error: "media not found" }, { status: 404 });
 
-  const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme, steps: [] });
+  const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme, targetWordCount, steps: [] });
   await reportAiCompanyUsage(email, first.usage);
 
   // おすすめ記事を自動採用（人間選択ゲートは廃止）。分析の推薦記事を以降の対象にする。
@@ -152,6 +154,7 @@ export async function POST(req: NextRequest) {
       mediaId,
       instruction,
       targetTheme: recommended ?? targetTheme,
+      targetWordCount,
       selectedArticle: recommended,
       automationMode: "staged",
       status: "in_progress",
@@ -241,7 +244,7 @@ export async function PATCH(req: NextRequest) {
     if (!reviseKey) return NextResponse.json({ error: "stepKey is required" }, { status: 400 });
     const stepsForContext = workflow.steps.map((step) => (step.key === reviseKey ? { ...step, revisionNote } : step)) as WorkflowStep[];
     const { output, usage } = await runStepWithAI(reviseKey as WorkflowStepKey, {
-      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, steps: stepsForContext,
+      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: stepsForContext,
     });
     await reportAiCompanyUsage(email, usage);
     await prisma.workflowStep.update({
@@ -270,7 +273,7 @@ export async function PATCH(req: NextRequest) {
   const nextStep = firstPendingStep(workflow);
   if (nextStep) {
     const { output, usage } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
-      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, steps: workflow.steps as WorkflowStep[],
+      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: workflow.steps as WorkflowStep[],
     });
     await reportAiCompanyUsage(email, usage);
     await prisma.workflowStep.update({

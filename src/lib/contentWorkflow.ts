@@ -19,6 +19,7 @@ type StepContext = {
   media: Pick<Media, "name" | "domain" | "description" | "audience" | "tone" | "mainCategories">;
   instruction: string;
   targetTheme?: string | null;
+  targetWordCount?: number | null;
   steps: Pick<WorkflowStep, "key" | "output" | "revisionNote">[];
 };
 
@@ -171,8 +172,9 @@ export function generateStepOutput(key: WorkflowStepKey, context: StepContext) {
 
   if (key === "seo_requirements") {
     const keyword = prior<{ primaryKeyword?: string }>(context, "keyword_research")?.primaryKeyword ?? `${topic} とは`;
+    const rec = context.targetWordCount && context.targetWordCount > 0 ? context.targetWordCount : 3600;
     return {
-      targetWordCount: { min: 2800, recommended: 3600, max: 4600 },
+      targetWordCount: { min: Math.round(rec * 0.9), recommended: rec, max: Math.round(rec * 1.15) },
       keywordPlacement: [
         "titleの前半",
         "導入文の100字以内",

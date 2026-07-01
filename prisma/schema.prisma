@@ -156,6 +156,7 @@ model ContentWorkflow {
   media             Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
   instruction       String
   targetTheme       String?
+  targetWordCount   Int?
   status            String   @default("draft")
   currentStep       String   @default("media_analysis")
   automationMode    String   @default("approval_required")

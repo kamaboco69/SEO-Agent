@@ -109,6 +109,7 @@ export default function PipelinePage() {
   const [selectedMediaId, setSelectedMediaId] = useState<string>("");
   const [theme, setTheme] = useState("");
   const [instruction, setInstruction] = useState("");
+  const [wordCount, setWordCount] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [running, setRunning] = useState(false);
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
@@ -227,7 +228,7 @@ export default function PipelinePage() {
       const res = await fetch("/api/pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaId: selectedMediaId, instruction: instruction.trim(), targetTheme: theme.trim() || null }),
+        body: JSON.stringify({ mediaId: selectedMediaId, instruction: instruction.trim(), targetTheme: theme.trim() || null, targetWordCount: wordCount ? Number(wordCount) : null }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
@@ -449,6 +450,25 @@ export default function PipelinePage() {
             <div>
               <label className="block text-[10px] font-bold mb-1.5" style={{ color: "var(--text-muted)" }}>指示（任意）</label>
               <textarea value={instruction} onChange={(e) => setInstruction(e.target.value)} rows={2} placeholder="例: CV導線に近い比較記事を優先したい" className="cyber-input w-full px-3 py-2 rounded-lg text-sm resize-none" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold mb-1.5" style={{ color: "var(--text-muted)" }}>目標文字数（任意）</label>
+              <div className="flex items-center gap-2">
+                <input value={wordCount} onChange={(e) => setWordCount(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" placeholder="例: 5000" className="cyber-input flex-1 px-3 py-2 rounded-lg text-sm" />
+                <span className="text-[10px] shrink-0" style={{ color: "var(--text-muted)" }}>字</span>
+              </div>
+              <div className="flex gap-1 mt-1.5">
+                {[2000, 3000, 5000, 8000].map((n) => (
+                  <button key={n} type="button" onClick={() => setWordCount(String(n))}
+                    className="px-2 py-1 rounded-md text-[9px] font-bold transition-colors"
+                    style={wordCount === String(n)
+                      ? { background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.4)", color: "#34d399" }
+                      : { background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.14)", color: "var(--text-muted)" }}>
+                    {n.toLocaleString()}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[9px] mt-1" style={{ color: "var(--text-muted)" }}>未指定ならAIが最適な文字数を自動判断します</p>
             </div>
             {entitlement && !entitlement.entitled ? (
               <div className="rounded-lg p-3 space-y-2" style={{ background: "rgba(250,204,21,0.06)", border: "1px solid rgba(250,204,21,0.3)" }}>

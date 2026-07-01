@@ -16,8 +16,15 @@ type StepContext = {
   media: Pick<Media, "name" | "domain" | "description" | "audience" | "tone" | "mainCategories" | "wpUrl">;
   instruction: string;
   targetTheme?: string | null;
+  targetWordCount?: number | null;
   steps: Pick<WorkflowStep, "key" | "output" | "revisionNote">[];
 };
+
+// 執筆系ステップのmax_tokens。指定文字数が大きいほど余裕を持たせる（streamで受けるので大きくてOK）
+function writingMaxTokens(targetWordCount?: number | null): number {
+  if (!targetWordCount || targetWordCount <= 0) return 8000;
+  return Math.min(32000, Math.max(8000, Math.ceil(targetWordCount * 2.4) + 2500));
+}
 
 // 対象メディアの実サイト(トップページ)からテキストを取得し、分析の材料にする。
 async function fetchSiteContext(media: StepContext["media"]): Promise<string | null> {
@@ -352,12 +359,21 @@ export async function runStepWithAI(
     siteContext,
     instruction: context.instruction,
     targetTheme: context.targetTheme ?? null,
+    targetWordCount: context.targetWordCount ?? null,
     previousSteps: priorOutputs(context),
     revisionNote: revision ?? null,
   };
 
+  // 文字数指定がある場合、要件定義と執筆で必ず反映させる
+  const wc = context.targetWordCount && context.targetWordCount > 0 ? context.targetWordCount : null;
+  const wordCountNote = wc && (key === "seo_requirements" || key === "draft_article")
+    ? key === "draft_article"
+      ? `\n# 文字数の指定(必ず厳守)\n本文の文字数は約${wc}字（±10%以内）にすること。情報を薄めず、具体例・データ・手順で密度を上げて指定文字数に到達させる。目安を大きく下回らないこと。\n`
+      : `\n# 文字数の指定(必ず反映)\ntargetWordCount.recommended は ${wc} にし、min/max もその前後（min=約${Math.round(wc * 0.9)}, max=約${Math.round(wc * 1.15)}）に設定すること。\n`
+    : "";
+
   const user = `# タスク
-${spec.task}
+${spec.task}${wordCountNote}
 ${revision ? `\n# 修正指示(必ず反映)\n${revision}\n` : ""}
 # 入力データ
 ${JSON.stringify(payload, null, 2)}
@@ -369,19 +385,20 @@ JSONのみを出力してください。`;
 
   try {
     const isWriting = spec.model === WRITING_MODEL;
-    const msg = await client.messages.create({
-      model: spec.model,
-      max_tokens: isWriting ? 8000 : 2000,
-      system,
-      messages: [{ role: "user", content: user }],
-    });
-    const text = msg.content[0]?.type === "text" ? msg.content[0].text : "";
-    const usage: StepUsage = {
-      model: spec.model,
-      provider: "anthropic",
-      inputTokens: msg.usage?.input_tokens ?? 0,
-      outputTokens: msg.usage?.output_tokens ?? 0,
-    };
+    const maxTokens = isWriting ? writingMaxTokens(wc) : 2000;
+    let text = "";
+    let usage: StepUsage = { model: spec.model, provider: "anthropic", inputTokens: 0, outputTokens: 0 };
+    if (isWriting) {
+      // 執筆は長文＆max_tokensが大きくなるためstreamで受ける（"Streaming is required"回避）
+      const stream = client.messages.stream({ model: spec.model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] });
+      const final = await stream.finalMessage();
+      text = final.content.filter((c): c is Anthropic.TextBlock => c.type === "text").map((c) => c.text).join("");
+      usage = { model: spec.model, provider: "anthropic", inputTokens: final.usage?.input_tokens ?? 0, outputTokens: final.usage?.output_tokens ?? 0 };
+    } else {
+      const msg = await client.messages.create({ model: spec.model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] });
+      text = msg.content[0]?.type === "text" ? msg.content[0].text : "";
+      usage = { model: spec.model, provider: "anthropic", inputTokens: msg.usage?.input_tokens ?? 0, outputTokens: msg.usage?.output_tokens ?? 0 };
+    }
     const json = extractJson(text);
     if (json && typeof json === "object") {
       return { output: { ...(json as Record<string, unknown>), revisionApplied: revision ?? null, _engine: "ai" }, usage };
