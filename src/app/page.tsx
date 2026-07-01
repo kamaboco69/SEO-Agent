@@ -5,7 +5,7 @@ import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
   Globe, ChevronDown, ChevronRight, Lock, Crown, ExternalLink, Code2,
-  Image as ImageIcon, Eye, Rocket, MousePointerClick,
+  Image as ImageIcon, Eye, Rocket, MousePointerClick, FileText, Upload,
 } from "lucide-react";
 
 interface Entitlement {
@@ -80,6 +80,10 @@ const STEP_ORDER = [
 
 function hasOutput(step?: Step) {
   return Boolean(step && step.output && Object.keys(step.output).length > 0);
+}
+
+function aiStepsDone(wf: Workflow) {
+  return STEP_ORDER.every((k) => hasOutput(wf.steps.find((s) => s.key === k)));
 }
 
 // 装飾HTMLを別ウィンドウでレンダリングしてプレビュー
@@ -572,6 +576,8 @@ export default function PipelinePage() {
                 );
               })}
 
+              <ProductionSteps workflow={workflow} running={running} />
+
               {finalArticle && (
                 <div className="glass-static rounded-xl overflow-hidden">
                   <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
@@ -709,6 +715,87 @@ function FlowOverview({ canRun }: { canRun: boolean }) {
           ? "各工程は完了後に個別で修正・再生成もできます。プレビューで見た目を確認してから公開できます。"
           : "※ 一気通貫の自動生成はAICompanyの有料プラン契約者のみご利用いただけます。"}
       </p>
+    </div>
+  );
+}
+
+// ── 入稿・公開フェーズ（AIステップの後段。workflowの状態フィールドに連動）──
+type PhaseState = "done" | "active" | "pending" | "skip";
+
+function ProductionSteps({ workflow, running }: { workflow: Workflow; running: boolean }) {
+  const wpConnected = Boolean(workflow.media.wpUrl);
+  const aiDone = aiStepsDone(workflow);
+  const wpSaved = Boolean(workflow.wpPostId);
+  const published = workflow.wpPublished;
+  const draftDone = hasOutput(workflow.steps.find((s) => s.key === "draft_article"));
+  // 最終run_next（WP保存＋画像生成）が実行中
+  const wpActive = running && aiDone && wpConnected && !wpSaved;
+
+  const phases: {
+    key: string; icon: typeof Search; color: string; label: string;
+    state: PhaseState; note: string; link?: string | null;
+  }[] = [
+    {
+      key: "gdoc", icon: FileText, color: "#22d3ee", label: "Googleドキュメントに保存",
+      state: workflow.gdocId ? "done" : draftDone ? "skip" : "pending",
+      note: workflow.gdocId ? "保存済み" : "記事執筆の完了時に自動保存",
+      link: workflow.gdocUrl,
+    },
+    {
+      key: "images", icon: ImageIcon, color: "#f472b6", label: "画像を自動生成・挿入",
+      state: wpSaved ? "done" : wpActive ? "active" : wpConnected ? "pending" : "skip",
+      note: wpSaved ? (workflow.imagesGenerated ? "gpt-image-1で生成・挿入済み" : "挿入対象の画像コメントなし")
+        : wpConnected ? "gpt-image-1で自動生成し記事に挿入" : "WordPress未接続のためスキップ",
+    },
+    {
+      key: "wp_draft", icon: Upload, color: "#a78bfa", label: "WordPressに下書き保存",
+      state: wpSaved ? "done" : wpActive ? "active" : wpConnected ? "pending" : "skip",
+      note: wpConnected ? (wpSaved ? "下書き保存済み" : "装飾HTMLを自動で下書き保存") : "WordPress未接続（左パネルで接続）",
+      link: wpSaved ? workflow.wpEditLink : null,
+    },
+    {
+      key: "publish", icon: Rocket, color: "#34d399", label: "WordPressに公開",
+      state: published ? "done" : "pending",
+      note: published ? "公開済み" : wpSaved ? "内容を確認して「公開する」で実行" : "下書き保存後に公開できます",
+      link: published ? workflow.wpViewLink : null,
+    },
+  ];
+
+  const stateText: Record<PhaseState, string> = { done: "完了", active: "処理中…", pending: "待機", skip: "スキップ" };
+
+  return (
+    <div className="glass-static rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
+        <p className="text-[10px] font-bold tracking-wider" style={{ color: "var(--text-muted)" }}>画像生成・WordPress入稿・公開</p>
+      </div>
+      <div className="divide-y" style={{ borderColor: "rgba(56,189,248,0.06)" }}>
+        {phases.map((p) => {
+          const Icon = p.icon;
+          const dim = p.state === "pending" || p.state === "skip";
+          return (
+            <div key={p.key} className="flex items-center gap-3 px-4 py-3" style={{ borderColor: "rgba(56,189,248,0.06)" }}>
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: dim ? "rgba(255,255,255,0.03)" : `${p.color}1a`, border: `1px solid ${dim ? "rgba(255,255,255,0.08)" : `${p.color}44`}` }}>
+                {p.state === "active" ? <Loader2 size={14} className="animate-spin" style={{ color: p.color }} />
+                  : p.state === "done" ? <Check size={14} style={{ color: p.color }} />
+                  : <Icon size={14} style={{ color: dim ? "var(--text-muted)" : p.color }} />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold" style={{ color: dim ? "var(--text-muted)" : "var(--text)" }}>{p.label}</p>
+                <p className="text-[9px] mt-0.5" style={{ color: p.state === "active" ? p.color : "var(--text-muted)" }}>{p.note}</p>
+              </div>
+              {p.link && (
+                <a href={p.link} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold shrink-0 flex items-center gap-0.5" style={{ color: "var(--cyan)" }}>
+                  開く <ExternalLink size={10} />
+                </a>
+              )}
+              <span className="text-[9px] font-bold shrink-0" style={{ color: p.state === "done" ? p.color : p.state === "active" ? p.color : "var(--text-muted)" }}>
+                {stateText[p.state]}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
