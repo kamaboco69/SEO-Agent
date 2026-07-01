@@ -356,12 +356,19 @@ export async function getAiCompanyEntitlement(userId: string, email: string): Pr
   const profile = await prisma.aiCompanyProfile.findUnique({ where: { userId } });
   const settings = (profile?.settings ?? {}) as {
     entitled?: boolean;
+    seoEntitled?: boolean;
+    mahalHired?: boolean;
     planName?: string | null;
     billingUrl?: string | null;
   };
+  // SEO Agent は専門社員「マハル」雇用を必須とする。
+  // seoEntitled（AI Company側で「有料且つマハル雇用」を判定）を優先し、
+  // 旧プロフィール（seoEntitled未設定）は entitled にフォールバック。
+  const entitled =
+    settings.seoEntitled !== undefined ? Boolean(settings.seoEntitled) : Boolean(settings.entitled);
   return {
     found: Boolean(profile),
-    entitled: Boolean(settings.entitled),
+    entitled,
     planName: settings.planName ?? null,
     billingUrl: settings.billingUrl ?? null,
   };
