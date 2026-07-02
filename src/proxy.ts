@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionCookieName } from "@/lib/authConstants";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/", "/api/analyst/recommendations"];
+// /sso・/api/sso/ は「これからセッションを確立する」入口なので必ず公開（未ログインで到達するため）。
+// これを塞ぐと iframe 埋め込みのワンタイムSSOが /login に飛ばされ、永久にログイン状態にならない。
+const PUBLIC_PATHS = ["/login", "/sso", "/api/sso/", "/api/auth/", "/api/analyst/recommendations"];
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
