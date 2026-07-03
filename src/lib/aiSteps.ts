@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Media, WorkflowStep } from "@prisma/client";
 import { generateStepOutput, type WorkflowStepKey } from "@/lib/contentWorkflow";
+import { wpPosts, wpTaxonomies } from "@/lib/wordpress";
 
 // 一気通貫パイプラインの各ステップを「本物のAI」で実行する。
 // ANTHROPIC_API_KEY 未設定時は contentWorkflow.ts のテンプレ生成にフォールバックする。
@@ -13,12 +14,30 @@ export function aiEnabled() {
 }
 
 type StepContext = {
-  media: Pick<Media, "name" | "domain" | "description" | "audience" | "tone" | "mainCategories" | "wpUrl">;
+  media: Pick<Media, "name" | "domain" | "description" | "audience" | "tone" | "mainCategories" | "wpUrl" | "wpSecret">;
   instruction: string;
   targetTheme?: string | null;
   targetWordCount?: number | null;
   steps: Pick<WorkflowStep, "key" | "output" | "revisionNote">[];
 };
+
+// WordPress接続済みなら、既存記事・カテゴリを取得して「不足記事の特定」「実在する内部リンク」の材料にする
+async function fetchWpContext(media: StepContext["media"]) {
+  if (!media.wpUrl || !media.wpSecret) return null;
+  try {
+    const [posts, tax] = await Promise.all([
+      wpPosts(media.wpUrl, media.wpSecret, { perPage: 50, status: "publish" }),
+      wpTaxonomies(media.wpUrl, media.wpSecret, 40),
+    ]);
+    return {
+      totalPublished: posts.total,
+      existingArticles: posts.posts.map((p) => ({ title: p.title, url: p.url, categories: p.categories })),
+      categories: tax.categories.map((c) => ({ name: c.name, url: c.url, count: c.count })),
+    };
+  } catch {
+    return null;
+  }
+}
 
 // 執筆系ステップのmax_tokens。指定文字数が大きいほど余裕を持たせる（streamで受けるので大きくてOK）
 function writingMaxTokens(targetWordCount?: number | null): number {
@@ -346,6 +365,8 @@ export async function runStepWithAI(
 
   // メディア分析では実サイトの内容を取得して材料にする
   const siteContext = key === "media_analysis" ? await fetchSiteContext(context.media) : null;
+  // 既存記事/カテゴリ（不足記事の特定・実在する内部リンクに使用）
+  const wpContext = key === "media_analysis" || key === "seo_requirements" ? await fetchWpContext(context.media) : null;
 
   const payload = {
     media: {
@@ -357,12 +378,20 @@ export async function runStepWithAI(
       categories: mediaCategories(context.media),
     },
     siteContext,
+    wpContext,
     instruction: context.instruction,
     targetTheme: context.targetTheme ?? null,
     targetWordCount: context.targetWordCount ?? null,
     previousSteps: priorOutputs(context),
     revisionNote: revision ?? null,
   };
+
+  // 既存記事情報の活用指示
+  const wpNote = wpContext
+    ? key === "media_analysis"
+      ? `\n# 既存記事の活用(必須)\npayload.wpContext.existingArticles が公開済みの既存記事一覧です。これらと内容が重複する記事は提案しないこと。既存カテゴリ(payload.wpContext.categories)の文脈に沿って、まだ無い不足テーマだけを contentGaps / recommendedArticle にすること。\n`
+      : `\n# 内部リンクは実在URLのみ(必須)\ninternalLinks の target には、payload.wpContext.existingArticles に実在する記事の url を使うこと（架空の /path を作らない）。テーマに関連する既存記事を2〜4本選び、anchor は自然な日本語アンカーにする。\n`
+    : "";
 
   // 文字数指定がある場合、要件定義と執筆で必ず反映させる
   const wc = context.targetWordCount && context.targetWordCount > 0 ? context.targetWordCount : null;
@@ -373,7 +402,7 @@ export async function runStepWithAI(
     : "";
 
   const user = `# タスク
-${spec.task}${wordCountNote}
+${spec.task}${wordCountNote}${wpNote}
 ${revision ? `\n# 修正指示(必ず反映)\n${revision}\n` : ""}
 # 入力データ
 ${JSON.stringify(payload, null, 2)}

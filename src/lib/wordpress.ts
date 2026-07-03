@@ -11,7 +11,7 @@ function normalizeBase(url: string): string {
 async function call(
   wpUrl: string,
   secret: string,
-  op: "diag" | "upsert" | "upload",
+  op: "diag" | "upsert" | "upload" | "siteinfo" | "posts" | "taxonomies" | "sitemap",
   params: Record<string, string> = {}
 ): Promise<Record<string, unknown>> {
   const base = normalizeBase(wpUrl);
@@ -74,5 +74,56 @@ export async function wpUploadImage(
   return {
     attachmentId: Number(data.attachment_id),
     url: String(data.url ?? ""),
+  };
+}
+
+// ── SEO/執筆に使う読み取り系 ──
+export interface WpPostLite {
+  id: number; title: string; url: string; status: string;
+  date: string; modified: string; excerpt: string;
+  categories: string[]; tags: string[]; word_count: number;
+}
+export interface WpTerm { id: number; name: string; slug: string; count: number; url: string }
+
+export async function wpSiteInfo(wpUrl: string, secret: string) {
+  return call(wpUrl, secret, "siteinfo");
+}
+
+export async function wpPosts(
+  wpUrl: string,
+  secret: string,
+  opts: { perPage?: number; page?: number; search?: string; status?: string } = {}
+) {
+  const params: Record<string, string> = {};
+  if (opts.perPage) params.per_page = String(opts.perPage);
+  if (opts.page) params.page = String(opts.page);
+  if (opts.search) params.search = opts.search;
+  if (opts.status) params.status = opts.status;
+  const data = await call(wpUrl, secret, "posts", params);
+  return {
+    total: Number(data.total ?? 0),
+    totalPages: Number(data.total_pages ?? 0),
+    posts: (data.posts as WpPostLite[]) ?? [],
+  };
+}
+
+export async function wpTaxonomies(wpUrl: string, secret: string, limit?: number) {
+  const params: Record<string, string> = {};
+  if (limit) params.limit = String(limit);
+  const data = await call(wpUrl, secret, "taxonomies", params);
+  return {
+    categories: (data.categories as WpTerm[]) ?? [],
+    tags: (data.tags as WpTerm[]) ?? [],
+  };
+}
+
+export async function wpSitemap(wpUrl: string, secret: string, limit?: number) {
+  const params: Record<string, string> = {};
+  if (limit) params.limit = String(limit);
+  const data = await call(wpUrl, secret, "sitemap", params);
+  return {
+    sitemapUrl: String(data.sitemap_url ?? ""),
+    seoPlugin: String(data.seo_plugin ?? ""),
+    urls: (data.urls as { title: string; url: string; type: string; modified: string }[]) ?? [],
   };
 }
