@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
   Globe, ChevronDown, ChevronRight, Lock, Crown, ExternalLink, Code2,
-  Image as ImageIcon, Eye, Rocket, MousePointerClick, FileText, Upload,
+  Image as ImageIcon, Eye, Rocket, MousePointerClick, FileText, Upload, Square,
 } from "lucide-react";
 
 interface Entitlement {
@@ -123,11 +123,9 @@ export default function PipelinePage() {
   const [copied, setCopied] = useState(false);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [entLoading, setEntLoading] = useState(true);
-  const [showWp, setShowWp] = useState(false);
-  const [wpUrl, setWpUrl] = useState("");
-  const [wpSecret, setWpSecret] = useState("");
-  const [wpSaving, setWpSaving] = useState(false);
-  const [wpMsg, setWpMsg] = useState("");
+  // 作業停止用：ステップ間で停止フラグを見て中断し、実行中のリクエストはabortする
+  const stopRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const loadMedia = useCallback(async () => {
     const res = await fetch("/api/media");
@@ -198,19 +196,28 @@ export default function PipelinePage() {
     }
   }
 
-  // in_progress の間だけ run_next を回し、ゲート(選択/承認)や完了で停止する
+  // in_progress の間だけ run_next を回し、完了・停止で止まる
   async function drive(wf: Workflow) {
     let guard = 0;
     while (wf.status === "in_progress" && guard < 14) {
+      if (stopRef.current) break; // 停止要求
       guard += 1;
-      const r = await fetch("/api/pipeline", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflowId: wf.id, action: "run_next" }),
-      });
+      abortRef.current = new AbortController();
+      let r: Response;
+      try {
+        r = await fetch("/api/pipeline", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workflowId: wf.id, action: "run_next" }),
+          signal: abortRef.current.signal,
+        });
+      } catch {
+        break; // abort もしくは通信エラー → 停止
+      }
       if (!r.ok) break;
       wf = (await r.json()) as Workflow;
       setWorkflow(wf);
+      if (stopRef.current) break;
       const active = STEP_ORDER.find((k) => !hasOutput(wf.steps.find((s) => s.key === k)));
       if (active) setExpanded(active);
     }
@@ -221,8 +228,24 @@ export default function PipelinePage() {
     return wf;
   }
 
+  // 作業停止：ステップ間で中断し、実行中のリクエストを打ち切る（サーバ側の現ステップは完了扱いになる場合あり）
+  function stopWork() {
+    stopRef.current = true;
+    abortRef.current?.abort();
+    setRunning(false);
+  }
+
+  // 停止したワークフローを再開
+  async function resumeWork() {
+    if (!workflow || running) return;
+    stopRef.current = false;
+    setRunning(true);
+    try { await drive(workflow); } finally { setRunning(false); }
+  }
+
   async function runPipeline() {
     if (!selectedMediaId || running) return;
+    stopRef.current = false;
     setRunning(true);
     setWorkflow(null);
     setExpanded(null);
@@ -285,31 +308,13 @@ export default function PipelinePage() {
     } finally { setRunning(false); }
   }
 
-  async function saveWpConnection() {
-    if (!selectedMediaId || !wpUrl.trim() || !wpSecret.trim()) return;
-    setWpSaving(true); setWpMsg("");
-    try {
-      const r = await fetch("/api/media/wp", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaId: selectedMediaId, wpUrl: wpUrl.trim(), wpSecret: wpSecret.trim() }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) { setWpMsg(`✅ 接続成功${d.site ? `: ${d.site}` : ""}`); setWpSecret(""); await loadMedia(); }
-      else setWpMsg(`❌ ${d.error ?? "接続に失敗しました"}`);
-    } finally { setWpSaving(false); }
-  }
-
   async function openWorkflow(id: string) {
     const res = await fetch(`/api/pipeline?id=${id}`);
     if (res.ok) {
       const wf = (await res.json()) as Workflow;
       setWorkflow(wf);
-      // 完了済みは閉じた状態で開く。実行中は執筆ステップを開いておく
+      // 完了済みは閉じた状態で開く。実行中(停止済み含む)は執筆ステップを開き、再開は手動
       setExpanded(wf.status === "completed" ? null : "draft_article");
-      if (wf.status === "in_progress" && !running) {
-        setRunning(true);
-        try { await drive(wf); } finally { setRunning(false); }
-      }
     }
   }
 
@@ -419,27 +424,18 @@ export default function PipelinePage() {
 
             {selectedMedia && (
               <div className="pt-2" style={{ borderTop: "1px solid rgba(56,189,248,0.1)" }}>
-                <button onClick={() => { setShowWp((v) => !v); setWpUrl(selectedMedia.wpUrl ?? ""); setWpMsg(""); }}
-                  className="w-full flex items-center justify-between text-[10px] font-bold py-1" style={{ color: "var(--text-muted)" }}>
-                  <span className="flex items-center gap-1.5">
-                    <Globe size={11} style={{ color: selectedMedia.wpUrl ? "#34d399" : "var(--text-muted)" }} />
-                    WordPress接続 {selectedMedia.wpUrl ? "✅" : "（未接続）"}
+                <div className="flex items-center gap-1.5 py-1">
+                  <Globe size={11} style={{ color: selectedMedia.wpUrl ? "#34d399" : "var(--text-muted)" }} />
+                  <span className="text-[10px] font-bold" style={{ color: selectedMedia.wpUrl ? "#34d399" : "var(--text-muted)" }}>
+                    WordPress {selectedMedia.wpUrl ? "連携済み ✅" : "未連携"}
                   </span>
-                  <ChevronDown size={12} style={{ transform: showWp ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
-                </button>
-                {showWp && (
-                  <div className="space-y-1.5 mt-1.5">
-                    {selectedMedia.wpUrl && (
-                      <p className="text-[9px]" style={{ color: "#34d399" }}>接続済み: {selectedMedia.wpUrl}（変更する場合のみ再入力）</p>
-                    )}
-                    <input value={wpUrl} onChange={(e) => setWpUrl(e.target.value)} placeholder="https://example.com" className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]" />
-                    <input value={wpSecret} onChange={(e) => setWpSecret(e.target.value)} placeholder="接続シークレット（mu-pluginのSEO_AGENT_SECRET）" className="cyber-input w-full px-2 py-1.5 rounded-lg text-[10px]" />
-                    <button onClick={saveWpConnection} disabled={wpSaving || !wpUrl.trim() || !wpSecret.trim()}
-                      className="cyber-btn-primary w-full py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">
-                      {wpSaving ? "テスト中…" : "接続テストして保存"}
-                    </button>
-                    {wpMsg && <p className="text-[9px] leading-relaxed" style={{ color: wpMsg.startsWith("✅") ? "#34d399" : "#f87171" }}>{wpMsg}</p>}
-                  </div>
+                </div>
+                {selectedMedia.wpUrl ? (
+                  <p className="text-[9px] break-all" style={{ color: "var(--text-muted)" }}>{selectedMedia.wpUrl}</p>
+                ) : (
+                  <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    対象サイトに専用プラグイン「SEO Agent Connector」を入れて有効化すると、自動で連携されます（URL・キーの入力は不要）。
+                  </p>
                 )}
               </div>
             )}
@@ -555,7 +551,7 @@ export default function PipelinePage() {
             <div className="space-y-3">
               {/* 生成中は進捗を上部に。完了バナーは一番下に置く（上→下の流れの最後にする） */}
               {workflow.status !== "completed" && (
-                <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
+                <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} onStop={stopWork} onResume={resumeWork} />
               )}
 
               {STEP_ORDER.map((key) => {
@@ -621,7 +617,7 @@ export default function PipelinePage() {
 
               {/* 完了バナー＋操作（プレビュー/公開/再執筆/削除）は最下部 */}
               {workflow.status === "completed" && (
-                <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} />
+                <StatusBanner workflow={workflow} running={running} onWp={wpAction} onReject={rejectDraft} onCancel={cancelWorkflow} onStop={stopWork} onResume={resumeWork} />
               )}
             </div>
           )}
@@ -832,21 +828,40 @@ function ProductionSteps({ workflow, running }: { workflow: Workflow; running: b
 }
 
 // ── 段階実行：通知＋人間アクション ──
-function StatusBanner({ workflow, running, onWp, onReject, onCancel }: {
+function StatusBanner({ workflow, running, onWp, onReject, onCancel, onStop, onResume }: {
   workflow: Workflow; running: boolean;
   onWp: (a: "wp_draft" | "wp_publish") => void;
   onReject: () => void; onCancel: () => void;
+  onStop: () => void; onResume: () => void;
 }) {
   const s = workflow.status;
 
   if (s === "in_progress") {
     return (
-      <div className="rounded-xl px-4 py-3 flex items-center gap-2" style={{ background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)" }}>
-        <Loader2 size={15} className="animate-spin" style={{ color: "var(--blue)" }} />
-        <div>
-          <p className="text-xs font-bold" style={{ color: "var(--blue)" }}>AIが自動生成中…</p>
-          <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>分析→執筆→画像生成→WordPress下書き保存まで自動で進みます（1〜3分）</p>
+      <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: running ? "rgba(56,189,248,0.08)" : "rgba(251,146,60,0.08)", border: `1px solid ${running ? "rgba(56,189,248,0.25)" : "rgba(251,146,60,0.3)"}` }}>
+        {running ? <Loader2 size={15} className="animate-spin shrink-0" style={{ color: "var(--blue)" }} /> : <Square size={14} className="shrink-0" style={{ color: "#fb923c" }} />}
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold" style={{ color: running ? "var(--blue)" : "#fb923c" }}>{running ? "AIが自動生成中…" : "作業を停止しました"}</p>
+          <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+            {running ? "分析→執筆→画像生成→WordPress下書き保存まで自動で進みます（1〜3分）" : "途中まで生成済みです。「再開」で続きから実行、または削除できます。"}
+          </p>
         </div>
+        {running ? (
+          <button onClick={onStop} className="shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5"
+            style={{ background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", color: "#f87171" }}>
+            <Square size={12} /> 作業停止
+          </button>
+        ) : (
+          <div className="shrink-0 flex items-center gap-2">
+            <button onClick={onResume} className="cyber-btn-primary px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5">
+              <Play size={12} /> 再開
+            </button>
+            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-[11px] font-bold"
+              style={{ background: "transparent", border: "1px solid rgba(248,113,113,0.3)", color: "rgba(248,113,113,0.85)" }}>
+              削除
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -883,7 +898,7 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel }: {
 
         {!wpConnected && (
           <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
-            WordPressに自動保存するには、左の「WordPress接続」を設定してください。
+            WordPressに自動保存するには、対象サイトに「SEO Agent Connector」プラグインを入れて有効化してください（自動連携）。
           </p>
         )}
 
