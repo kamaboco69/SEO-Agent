@@ -3,7 +3,8 @@ import { sessionCookieName } from "@/lib/authConstants";
 
 // /sso・/api/sso/ は「これからセッションを確立する」入口なので必ず公開（未ログインで到達するため）。
 // これを塞ぐと iframe 埋め込みのワンタイムSSOが /login に飛ばされ、永久にログイン状態にならない。
-const PUBLIC_PATHS = ["/login", "/sso", "/api/sso/", "/api/auth/", "/api/analyst/recommendations"];
+// /api/wp/ は WordPress プラグインからの未認証リクエスト（自動登録）。所有確認はエンドポイント内でdiagコールバックにより担保。
+const PUBLIC_PATHS = ["/login", "/sso", "/api/sso/", "/api/wp/", "/api/auth/", "/api/analyst/recommendations"];
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
