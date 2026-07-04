@@ -129,7 +129,8 @@ async function buildHtmlWithImages(
       html = html.replace(matches[i][0], "");
     } else {
       const altText = comment.replace(/"/g, "");
-      const figure = `<figure style="margin:1.5em 0;text-align:center;"><img src="${up.url}" alt="${altText}" style="max-width:100%;height:auto;border-radius:8px;" /></figure>`;
+      // 背景と同化しないよう影＋薄い枠線で境界を出す
+      const figure = `<figure style="margin:1.8em 0;text-align:center;"><img src="${up.url}" alt="${altText}" style="max-width:100%;height:auto;border-radius:10px;box-shadow:0 6px 20px rgba(15,23,42,.15);border:1px solid #e5e9f0;" /></figure>`;
       html = html.replace(matches[i][0], figure);
     }
     count += 1;

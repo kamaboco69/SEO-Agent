@@ -126,6 +126,18 @@ function ensureEyecatch(html: string, title: string): string {
   return `<!-- IMAGE: 記事「${title}」のアイキャッチ。テーマを象徴する清潔でモダンな編集向けビジュアル -->\n${html}`;
 }
 
+// h2/h3にcolor指定が無い場合、濃い文字色を注入（テーマの薄色/白抜きで見出しが見えなくなるのを防ぐ）
+function ensureHeadingColor(html: string): string {
+  return html.replace(/<(h2|h3)\b([^>]*)>/gi, (m, tag: string, attrs: string) => {
+    const color = tag.toLowerCase() === "h2" ? "#1a2b45" : "#22303f";
+    if (/style\s*=/.test(attrs)) {
+      if (/color\s*:/i.test(attrs)) return m; // 既に色指定あり → 尊重
+      return `<${tag}${attrs.replace(/style\s*=\s*"([^"]*)"/i, (_mm, s: string) => `style="color:${color} !important;${s}"`)}>`;
+    }
+    return `<${tag}${attrs} style="color:${color} !important;">`;
+  });
+}
+
 function inlineMd(s: string): string {
   let t = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -141,8 +153,8 @@ function markdownToHtml(md: string, title: string): string {
   let para: string[] = [];
   let list: string[] | null = null;
   let listOrdered = false;
-  const H2 = 'style="border-left:6px solid #2b6cb0;padding:.4em .6em;background:#f2f7fc;font-size:1.4em;margin:1.6em 0 .8em;"';
-  const H3 = 'style="border-bottom:2px solid #cbd5e0;padding-bottom:.2em;margin:1.4em 0 .6em;"';
+  const H2 = 'style="color:#1a2b45 !important;background:#eef4fb;border-left:6px solid #2b6cb0;padding:.5em .8em;font-size:1.35em;font-weight:700;border-radius:0 6px 6px 0;margin:1.6em 0 .8em;"';
+  const H3 = 'style="color:#22303f !important;border-bottom:2px solid #cbd5e0;padding-bottom:.25em;font-size:1.15em;font-weight:700;margin:1.4em 0 .6em;"';
 
   const flushPara = () => { if (para.length) { out.push(`<p>${inlineMd(para.join(" "))}</p>`); para = []; } };
   const flushList = () => {
@@ -299,8 +311,8 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 - 画像を入れる箇所に <!-- IMAGE: 画像の内容説明 --> を2〜5箇所（アイキャッチ含む）。
 
 # 記事内容に応じて以下の装飾を適切に使う（インラインCSS例をそのまま流用可）
-- 見出しh2: <h2 style="border-left:6px solid #2b6cb0;padding:.4em .6em;background:#f2f7fc;font-size:1.4em;">…</h2>
-- 見出しh3: <h3 style="border-bottom:2px solid #cbd5e0;padding-bottom:.2em;">…</h3>
+- 見出しh2(必ず濃い文字色を指定。テーマの白抜き対策で color は !important): <h2 style="color:#1a2b45 !important;background:#eef4fb;border-left:6px solid #2b6cb0;padding:.5em .8em;font-size:1.35em;font-weight:700;border-radius:0 6px 6px 0;">…</h2>
+- 見出しh3(必ず濃い文字色を指定): <h3 style="color:#22303f !important;border-bottom:2px solid #cbd5e0;padding-bottom:.25em;font-size:1.15em;font-weight:700;">…</h3>
 - マーカー(重要語): <span style="background:linear-gradient(transparent 60%,#fff3a0 60%);font-weight:700;">…</span>
 - 赤文字強調: <strong style="color:#e3342f;">…</strong>
 - 太字: <strong>…</strong>
@@ -526,7 +538,7 @@ ${markdown}
     if (!engineOk) {
       html = markdownToHtml(markdown, title); // 不十分/途切れ → 決定的変換で本文を担保
     }
-    html = ensureEyecatch(html, title);
+    html = ensureHeadingColor(ensureEyecatch(html, title));
     return {
       output: {
         title,
@@ -539,7 +551,7 @@ ${markdown}
       usage,
     };
   } catch (error) {
-    const html = ensureEyecatch(markdownToHtml(markdown, title), title);
+    const html = ensureHeadingColor(ensureEyecatch(markdownToHtml(markdown, title), title));
     return {
       output: {
         title,
