@@ -62,7 +62,28 @@ function aiErrorMessage(raw: string): string {
 
 type WfWithSteps = ContentWorkflow & { steps: WorkflowStep[] };
 
-// SWELL HTML内の <!-- IMAGE: 説明 --> を、gpt-image-1生成→WordPressアップロード→<img>で置換する。
+type EyecatchSpec = { style?: string; mainText?: string; subText?: string; prompt?: string };
+
+// アイキャッチ用プロンプト：記事タイトル文字を大きく載せ、内容に応じてイラスト/写真を選び、クリックしたくなる装飾に。
+function buildEyecatchPrompt(title: string, comment: string, ec: EyecatchSpec): string {
+  const mainText = (ec.mainText || title || comment || "").replace(/["]/g, "").trim().slice(0, 30);
+  const style = ec.style === "photo"
+    ? "high-quality photorealistic professional photography style, natural lighting, depth"
+    : "clean modern flat vector illustration style, crisp shapes";
+  const sub = ec.subText ? `Add smaller secondary Japanese catch copy: "${ec.subText.replace(/["]/g, "")}". ` : "";
+  const concept = ec.prompt ? `Background/motif: ${ec.prompt}. ` : (comment ? `Theme: ${comment}. ` : "");
+  return (
+    `A highly click-worthy Japanese blog article thumbnail / OGP header banner, landscape 3:2 composition, ${style}. ` +
+    `Render the Japanese headline text "${mainText}" LARGE, bold and perfectly legible as the clear focal point, spelled exactly and correctly with beautiful Japanese typography. ` +
+    sub +
+    concept +
+    `Professional editorial design: tasteful decorative accents, relevant icons/motifs to the topic, strong color contrast and readability, balanced layout with generous margins, trustworthy and eye-catching so viewers want to click. ` +
+    `Only display the specified Japanese text — no gibberish, no random letters, no watermark.`
+  );
+}
+
+// HTML内の <!-- IMAGE: 説明 --> を、gpt-image-1生成→WordPressアップロード→<img>で置換する。
+// 1枚目はアイキャッチ（タイトル文字入り・高品質・featured）。2枚目以降は本文中の補助ビジュアル。
 async function buildHtmlWithImages(
   workflow: WfWithSteps & { steps: WorkflowStep[] },
   wpUrl: string,
@@ -73,7 +94,14 @@ async function buildHtmlWithImages(
   if (!imageGenEnabled()) return { html: baseHtml, count: 0 };
 
   const ip = workflow.steps.find((s) => s.key === "image_prompts");
-  const images = ((ip?.output ?? {}) as { images?: { prompt?: string; comment?: string }[] }).images ?? [];
+  const ipOut = (ip?.output ?? {}) as {
+    images?: { prompt?: string; comment?: string }[];
+    eyecatch?: EyecatchSpec;
+  };
+  const bodyImages = ipOut.images ?? [];
+  const eyecatch = ipOut.eyecatch ?? {};
+  const swellTitle = ((workflow.steps.find((s) => s.key === "swell_format")?.output ?? {}) as { title?: string }).title;
+  const title = workflow.finalArticleTitle ?? swellTitle ?? "";
 
   const commentRe = /<!--\s*IMAGE:\s*([\s\S]*?)-->/g;
   const matches = [...baseHtml.matchAll(commentRe)].slice(0, 5); // 最大5枚
@@ -82,18 +110,22 @@ async function buildHtmlWithImages(
 
   for (let i = 0; i < matches.length; i++) {
     const comment = matches[i][1].trim();
-    const prompt = images[i]?.prompt || `Clean, modern editorial illustration for a Japanese article. ${comment}. Flat design, soft colors, no text.`;
-    const img = await generateImage(prompt);
+    const isEyecatch = i === 0;
+    const prompt = isEyecatch
+      ? buildEyecatchPrompt(title, comment, eyecatch)
+      : (bodyImages[i - 1]?.prompt || bodyImages[i]?.prompt
+          || `Clean, modern editorial illustration or photograph (choose what fits) for a Japanese article. ${comment}. Tasteful, professional, no text.`);
+    const img = await generateImage(prompt, "1536x1024", isEyecatch ? "high" : "medium");
     if (!img) continue;
     const up = await wpUploadImage(wpUrl, secret, {
       filename: `seo-${postId}-${i + 1}.png`,
       base64: img.base64,
       postId,
-      setFeatured: i === 0,
+      setFeatured: isEyecatch,
     });
     if (!up.url) continue;
-    if (i === 0) {
-      // 1枚目はアイキャッチ（テーマが記事先頭に自動表示）。本文には挿入せずコメントだけ除去して重複を防ぐ。
+    if (isEyecatch) {
+      // アイキャッチ（テーマが記事先頭に自動表示）は本文へ挿入せずコメントだけ除去して重複を防ぐ。
       html = html.replace(matches[i][0], "");
     } else {
       const altText = comment.replace(/"/g, "");

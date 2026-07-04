@@ -321,9 +321,24 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
   },
   image_prompts: {
     model: RESEARCH_MODEL,
-    task: "swell_formatのimageComments(各<!-- IMAGE: .. -->)それぞれに対し、gpt-image-1で生成するための英語の画像生成プロンプトを作ってください。記事テーマに沿い、文字を含まない清潔でモダンな編集向けビジュアルにすること。",
+    task: `gpt-image-1で生成する画像プロンプトを作ります。1枚目はアイキャッチ(サムネイル)、2枚目以降は本文中の補助ビジュアルです。
+
+# アイキャッチ(eyecatch) … 最重要。思わずクリックしたくなる魅力的なサムネイルにする
+- mainText: 画像に大きく載せる短い日本語タイトル。記事タイトル(previousSteps.draft_articleのtitle)を魅力的に凝縮し、20字以内・簡潔で目を引く言葉にする。
+- subText: mainTextを補う短い日本語キャッチ(15字以内・任意)。ベネフィットや数字・「事例」「完全ガイド」等の訴求語を入れると良い。
+- style: 記事の内容・トーンに応じて 'illustration'(親しみやすい/概念的/BtoC寄り) か 'photo'(信頼感/専門的/実務・法律・医療・金融など) を臨機応変に選ぶ。
+- prompt: 上記スタイルの、プロのブログサムネイル/OGPバナーとしての背景・装飾・構図・配色を指示する英語プロンプト。記事内容に合ったアイコンや象徴的モチーフ、視認性の高い配色、余白と重心のあるレイアウトにする(文字自体はmainText/subTextで別途大きく描画する)。
+
+# 本文画像(images) … imageComments(2枚目以降)に対応
+- 文字は入れない。清潔でモダンな編集向けビジュアル。記事内容に応じて illustration か photo を選ぶ。`,
     schema: `{
-  "images": [ { "index": 0, "comment": "元のコメント", "prompt": "English image generation prompt, no text in image" } ]
+  "eyecatch": {
+    "style": "illustration|photo",
+    "mainText": "画像に大きく載せる短いタイトル(20字以内)",
+    "subText": "補助キャッチ(15字以内・任意)",
+    "prompt": "English prompt for background/decoration/composition (do not describe text; text is drawn separately)"
+  },
+  "images": [ { "index": 1, "comment": "元のコメント", "prompt": "English image generation prompt, no text in image, illustration or photo as fits" } ]
 }`,
   },
 };

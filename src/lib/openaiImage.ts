@@ -14,9 +14,11 @@ export interface GeneratedImage {
 }
 
 // size: gpt-image-1 は 1024x1024 / 1536x1024 / 1024x1536 / auto
+// quality: アイキャッチ(文字入り)は "high" で文字の視認性・完成度を上げる
 export async function generateImage(
   prompt: string,
-  size: "1024x1024" | "1536x1024" | "1024x1536" = "1536x1024"
+  size: "1024x1024" | "1536x1024" | "1024x1536" = "1536x1024",
+  quality: "low" | "medium" | "high" | "auto" = "medium"
 ): Promise<GeneratedImage | null> {
   const key = openAiKey();
   if (!key) return null;
@@ -29,9 +31,9 @@ export async function generateImage(
         prompt: prompt.slice(0, 3800),
         n: 1,
         size,
-        quality: "medium",
+        quality,
       }),
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(180000),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.data?.[0]?.b64_json) {
