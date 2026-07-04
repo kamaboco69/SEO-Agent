@@ -126,6 +126,17 @@ function ensureEyecatch(html: string, title: string): string {
   return `<!-- IMAGE: 記事「${title}」のアイキャッチ。テーマを象徴する清潔でモダンな編集向けビジュアル -->\n${html}`;
 }
 
+// 本文中の記事タイトル見出しを除去（テーマが投稿タイトルを表示するため、本文のh1やタイトルh2は重複になる）
+function stripLeadingTitle(html: string, title: string): string {
+  const norm = (s: string) => s.replace(/<[^>]+>/g, "").replace(/\s+/g, "").trim();
+  // <h1>は本文に不要（二重H1回避）→ 全て除去
+  let h = html.replace(/<h1\b[^>]*>[\s\S]*?<\/h1>\s*/gi, "");
+  // 先頭がタイトルと一致する h2 も除去（IMAGEコメントや空白は温存）
+  h = h.replace(/^((?:\s|<!--[\s\S]*?-->)*)<h2\b[^>]*>([\s\S]*?)<\/h2>\s*/i,
+    (m, pre: string, inner: string) => (norm(inner) === norm(title) && title ? pre : m));
+  return h;
+}
+
 // h2/h3にcolor指定が無い場合、濃い文字色を注入（テーマの薄色/白抜きで見出しが見えなくなるのを防ぐ）
 function ensureHeadingColor(html: string): string {
   return html.replace(/<(h2|h3)\b([^>]*)>/gi, (m, tag: string, attrs: string) => {
@@ -307,6 +318,7 @@ const STEP_INSTRUCTIONS: Record<WorkflowStepKey, { model: string; schema: string
 # 厳守ルール
 - CSSは必ず style 属性のインラインのみ。<style>タグ・外部CSS・classやid・JavaScriptは禁止（テーマ非依存にするため）。
 - htmlは body内に貼るHTMLのみ（<html>/<head>不要）。
+- 記事タイトルは本文に含めない。<h1>やタイトルの見出しは付けず、いきなり導入文から始める（WordPressテーマが投稿タイトルを別途表示するため、重複・二重H1を避ける）。
 - 見出しは<h2>/<h3>。長い段落は避け、箇条書き・表・装飾で読みやすく分割する。
 - 画像を入れる箇所に <!-- IMAGE: 画像の内容説明 --> を2〜5箇所（アイキャッチ含む）。
 
@@ -538,7 +550,7 @@ ${markdown}
     if (!engineOk) {
       html = markdownToHtml(markdown, title); // 不十分/途切れ → 決定的変換で本文を担保
     }
-    html = ensureHeadingColor(ensureEyecatch(html, title));
+    html = ensureHeadingColor(stripLeadingTitle(ensureEyecatch(html, title), title));
     return {
       output: {
         title,
@@ -551,7 +563,7 @@ ${markdown}
       usage,
     };
   } catch (error) {
-    const html = ensureHeadingColor(ensureEyecatch(markdownToHtml(markdown, title), title));
+    const html = ensureHeadingColor(stripLeadingTitle(ensureEyecatch(markdownToHtml(markdown, title), title), title));
     return {
       output: {
         title,
