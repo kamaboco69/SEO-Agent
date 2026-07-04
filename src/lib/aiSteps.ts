@@ -337,6 +337,7 @@ export interface StepUsage {
 export interface StepRun {
   output: Record<string, unknown>;
   usage: StepUsage;
+  aiError?: string; // AI呼び出しが例外で失敗した場合のメッセージ（テンプレ雛形を成果物として出さないための目印）
 }
 
 const ZERO_USAGE: StepUsage = { model: "template", provider: "none", inputTokens: 0, outputTokens: 0 };
@@ -435,13 +436,15 @@ JSONのみを出力してください。`;
     // パース失敗 → テンプレにフォールバック（ただしトークンは消費済みなので計上する）
     return { output: { ...(generateStepOutput(key, context) as Record<string, unknown>), _engine: "template_fallback" }, usage };
   } catch (error) {
+    const message = error instanceof Error ? error.message : "ai_failed";
     return {
       output: {
         ...(generateStepOutput(key, context) as Record<string, unknown>),
         _engine: "template_fallback",
-        _error: error instanceof Error ? error.message : "ai_failed",
+        _error: message,
       },
       usage: ZERO_USAGE,
+      aiError: message,
     };
   }
 }

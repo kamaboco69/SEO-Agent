@@ -46,6 +46,20 @@ function hasOutput(step: { output: unknown }) {
   return Boolean(step.output && typeof step.output === "object" && Object.keys(step.output as object).length > 0);
 }
 
+// AI失敗を利用者向けの分かりやすいメッセージに変換（テンプレ雛形を成果物として出さないため停止する）
+function aiErrorMessage(raw: string): string {
+  if (/credit balance is too low/i.test(raw)) {
+    return "AI（Anthropic）のクレジット残高が不足しているため生成できません。AnthropicのPlansでチャージするとAIが動きます。";
+  }
+  if (/rate.?limit|overloaded|429|529/i.test(raw)) {
+    return "AIが混雑しています。少し時間をおいて再実行してください。";
+  }
+  if (/invalid|authentication|api key|401|403/i.test(raw)) {
+    return "AIキーの認証に失敗しました。設定を確認してください。";
+  }
+  return "AIの実行に失敗しました（" + raw.slice(0, 160) + "）。";
+}
+
 type WfWithSteps = ContentWorkflow & { steps: WorkflowStep[] };
 
 // SWELL HTML内の <!-- IMAGE: 説明 --> を、gpt-image-1生成→WordPressアップロード→<img>で置換する。
@@ -146,6 +160,11 @@ export async function POST(req: NextRequest) {
   const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme, targetWordCount, steps: [] });
   await reportAiCompanyUsage(email, first.usage);
 
+  // AIが動いていない（残高不足等）なら、雛形記事を作らずここで停止して原因を返す
+  if (first.aiError) {
+    return NextResponse.json({ error: aiErrorMessage(first.aiError), aiFailed: true }, { status: 502 });
+  }
+
   // おすすめ記事を自動採用（人間選択ゲートは廃止）。分析の推薦記事を以降の対象にする。
   const recommended = (first.output as { recommendedArticle?: string }).recommendedArticle ?? targetTheme ?? null;
 
@@ -243,10 +262,11 @@ export async function PATCH(req: NextRequest) {
     const revisionNote = body.revisionNote ? String(body.revisionNote).trim() : null;
     if (!reviseKey) return NextResponse.json({ error: "stepKey is required" }, { status: 400 });
     const stepsForContext = workflow.steps.map((step) => (step.key === reviseKey ? { ...step, revisionNote } : step)) as WorkflowStep[];
-    const { output, usage } = await runStepWithAI(reviseKey as WorkflowStepKey, {
+    const { output, usage, aiError } = await runStepWithAI(reviseKey as WorkflowStepKey, {
       media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: stepsForContext,
     });
     await reportAiCompanyUsage(email, usage);
+    if (aiError) return NextResponse.json({ error: aiErrorMessage(aiError), aiFailed: true }, { status: 502 });
     await prisma.workflowStep.update({
       where: { workflowId_key: { workflowId, key: reviseKey } },
       data: { status: "done", revisionNote, output: output as never },
@@ -272,10 +292,12 @@ export async function PATCH(req: NextRequest) {
   // run_next：未完のAIステップがあれば1つ実行
   const nextStep = firstPendingStep(workflow);
   if (nextStep) {
-    const { output, usage } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
+    const { output, usage, aiError } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
       media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: workflow.steps as WorkflowStep[],
     });
     await reportAiCompanyUsage(email, usage);
+    // AI失敗（残高不足等）→ 雛形を保存せず、in_progressのまま原因を返す（チャージ後に続きから再開できる）
+    if (aiError) return NextResponse.json({ error: aiErrorMessage(aiError), aiFailed: true }, { status: 502 });
     await prisma.workflowStep.update({
       where: { workflowId_key: { workflowId, key: nextStep.key } },
       data: { status: "done", output: output as never },

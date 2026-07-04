@@ -126,6 +126,7 @@ export default function PipelinePage() {
   // 作業停止用：ステップ間で停止フラグを見て中断し、実行中のリクエストはabortする
   const stopRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
 
   const loadMedia = useCallback(async () => {
     const res = await fetch("/api/media");
@@ -214,7 +215,11 @@ export default function PipelinePage() {
       } catch {
         break; // abort もしくは通信エラー → 停止
       }
-      if (!r.ok) break;
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        if (e?.error) setPipelineError(e.error); // AI失敗（残高不足等）を明示
+        break;
+      }
       wf = (await r.json()) as Workflow;
       setWorkflow(wf);
       if (stopRef.current) break;
@@ -239,6 +244,7 @@ export default function PipelinePage() {
   async function resumeWork() {
     if (!workflow || running) return;
     stopRef.current = false;
+    setPipelineError(null);
     setRunning(true);
     try { await drive(workflow); } finally { setRunning(false); }
   }
@@ -246,6 +252,7 @@ export default function PipelinePage() {
   async function runPipeline() {
     if (!selectedMediaId || running) return;
     stopRef.current = false;
+    setPipelineError(null);
     setRunning(true);
     setWorkflow(null);
     setExpanded(null);
@@ -259,7 +266,7 @@ export default function PipelinePage() {
         const e = await res.json().catch(() => ({}));
         if (res.status === 403) setEntitlement({ found: Boolean(e.found), entitled: false, planName: null, billingUrl: e.billingUrl ?? null });
         else if (res.status === 402) { alert(e.error ?? "今月のトークン上限に達しています"); recheckEntitlement(); }
-        else alert(e.error ?? "開始に失敗しました");
+        else setPipelineError(e.error ?? "開始に失敗しました");
         return;
       }
       const wf = (await res.json()) as Workflow;
@@ -545,6 +552,16 @@ export default function PipelinePage() {
 
         {/* Right: pipeline steps + article */}
         <div className="min-h-0 overflow-y-auto pr-1">
+          {pipelineError && (
+            <div className="rounded-xl p-3 mb-3 flex items-start gap-2" style={{ background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.4)" }}>
+              <Lock size={14} className="shrink-0 mt-0.5" style={{ color: "#f87171" }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-bold" style={{ color: "#f87171" }}>生成を停止しました</p>
+                <p className="text-[10px] mt-0.5 leading-relaxed" style={{ color: "var(--text)" }}>{pipelineError}</p>
+              </div>
+              <button onClick={() => setPipelineError(null)} className="text-[10px] shrink-0" style={{ color: "var(--text-muted)" }}>×</button>
+            </div>
+          )}
           {!workflow ? (
             <FlowOverview canRun={Boolean(entitlement?.entitled)} />
           ) : (
