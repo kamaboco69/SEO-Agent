@@ -92,9 +92,14 @@ async function buildHtmlWithImages(
       setFeatured: i === 0,
     });
     if (!up.url) continue;
-    const altText = comment.replace(/"/g, "");
-    const figure = `<figure style="margin:1.5em 0;text-align:center;"><img src="${up.url}" alt="${altText}" style="max-width:100%;height:auto;border-radius:8px;" /></figure>`;
-    html = html.replace(matches[i][0], figure);
+    if (i === 0) {
+      // 1枚目はアイキャッチ（テーマが記事先頭に自動表示）。本文には挿入せずコメントだけ除去して重複を防ぐ。
+      html = html.replace(matches[i][0], "");
+    } else {
+      const altText = comment.replace(/"/g, "");
+      const figure = `<figure style="margin:1.5em 0;text-align:center;"><img src="${up.url}" alt="${altText}" style="max-width:100%;height:auto;border-radius:8px;" /></figure>`;
+      html = html.replace(matches[i][0], figure);
+    }
     count += 1;
   }
   return { html, count };
