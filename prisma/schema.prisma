@@ -144,6 +144,9 @@ model Media {
   wpUrl             String?
   wpSecret          String?
   wpConnectedAt     DateTime?
+  gscProperty       String?
+  ga4PropertyId     String?
+  analyticsConnectedAt DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

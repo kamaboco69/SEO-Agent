@@ -11,7 +11,7 @@ function normalizeBase(url: string): string {
 async function call(
   wpUrl: string,
   secret: string,
-  op: "diag" | "upsert" | "upload" | "siteinfo" | "posts" | "taxonomies" | "sitemap",
+  op: "diag" | "upsert" | "upload" | "siteinfo" | "posts" | "taxonomies" | "sitemap" | "set_verification" | "set_ga4",
   params: Record<string, string> = {}
 ): Promise<Record<string, unknown>> {
   const base = normalizeBase(wpUrl);
@@ -115,6 +115,16 @@ export async function wpTaxonomies(wpUrl: string, secret: string, limit?: number
     categories: (data.categories as WpTerm[]) ?? [],
     tags: (data.tags as WpTerm[]) ?? [],
   };
+}
+
+// GSC所有権確認メタタグを設置（計測開始フローで使用）
+export async function wpSetVerification(wpUrl: string, secret: string, token: string) {
+  return call(wpUrl, secret, "set_verification", { token });
+}
+
+// GA4測定タグを設置（G-XXXX）
+export async function wpSetGa4(wpUrl: string, secret: string, measurementId: string) {
+  return call(wpUrl, secret, "set_ga4", { measurement_id: measurementId });
 }
 
 export async function wpSitemap(wpUrl: string, secret: string, limit?: number) {
