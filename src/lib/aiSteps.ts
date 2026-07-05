@@ -21,17 +21,26 @@ type StepContext = {
   steps: Pick<WorkflowStep, "key" | "output" | "revisionNote">[];
 };
 
-// WordPress接続済みなら、既存記事・カテゴリを取得して「不足記事の特定」「実在する内部リンク」の材料にする
+// WordPress接続済みなら、既存記事・カテゴリを「全件」取得して「不足記事の特定」「実在する内部リンク」の材料にする
 async function fetchWpContext(media: StepContext["media"]) {
   if (!media.wpUrl || !media.wpSecret) return null;
   try {
-    const [posts, tax] = await Promise.all([
-      wpPosts(media.wpUrl, media.wpSecret, { perPage: 50, status: "publish" }),
-      wpTaxonomies(media.wpUrl, media.wpSecret, 40),
+    const perPage = 100; // プラグイン側の上限
+    const maxPages = 20; // 暴走防止（最大 2000 記事）
+    const [first, tax] = await Promise.all([
+      wpPosts(media.wpUrl, media.wpSecret, { perPage, page: 1, status: "publish" }),
+      wpTaxonomies(media.wpUrl, media.wpSecret, 100),
     ]);
+    let all = first.posts;
+    const pages = Math.min(first.totalPages || 1, maxPages);
+    for (let p = 2; p <= pages; p++) {
+      const r = await wpPosts(media.wpUrl, media.wpSecret, { perPage, page: p, status: "publish" });
+      if (!r.posts.length) break;
+      all = all.concat(r.posts);
+    }
     return {
-      totalPublished: posts.total,
-      existingArticles: posts.posts.map((p) => ({ title: p.title, url: p.url, categories: p.categories })),
+      totalPublished: first.total,
+      existingArticles: all.map((p) => ({ title: p.title, url: p.url, categories: p.categories })),
       categories: tax.categories.map((c) => ({ name: c.name, url: c.url, count: c.count })),
     };
   } catch {
