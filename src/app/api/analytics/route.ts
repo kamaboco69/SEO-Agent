@@ -44,6 +44,7 @@ export async function GET(req: NextRequest) {
   const gscPages = [...byUrl.values()];
   const ga4Rows: Ga4Row[] = Array.isArray(res?.ga4) ? (res.ga4 as Ga4Row[]) : [];
   const ga4ByPath = new Map(ga4Rows.map((r) => [pathOf(r.path), r]));
+  const pageQueries: Record<string, GscRow[]> = (res?.gsc && "pageQueries" in res.gsc ? res.gsc.pageQueries : {}) ?? {};
 
   // 記事タイトルの補完（自分が生成した記事のURL→タイトル）
   const workflows = await prisma.contentWorkflow.findMany({
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
       ctr: p.ctr,
       position: p.position,
       views: ga4?.views ?? 0,
+      queries: (pageQueries[p.key] ?? []).map((q) => ({ query: q.key, impressions: q.impressions, position: q.position, clicks: q.clicks })),
       candidate: rewriteCandidate(p),
     };
   });
@@ -71,7 +73,7 @@ export async function GET(req: NextRequest) {
   // GSCがまだ無い(未計測)がGA4だけある場合の補完
   if (rows.length === 0 && ga4Rows.length > 0) {
     for (const g of ga4Rows) {
-      rows.push({ url: g.path, path: pathOf(g.path), title: titleByPath.get(pathOf(g.path)) ?? null, impressions: 0, clicks: 0, ctr: 0, position: 0, views: g.views, candidate: null });
+      rows.push({ url: g.path, path: pathOf(g.path), title: titleByPath.get(pathOf(g.path)) ?? null, impressions: 0, clicks: 0, ctr: 0, position: 0, views: g.views, queries: [], candidate: null });
     }
   }
 

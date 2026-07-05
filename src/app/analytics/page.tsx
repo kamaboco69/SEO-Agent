@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   LineChart, Loader2, RefreshCw, Play, Globe, TrendingUp, MousePointerClick,
   Eye, Search, AlertCircle, ExternalLink, PenLine, Activity,
@@ -13,6 +13,7 @@ interface MediaItem {
 interface Row {
   url: string; path: string; title: string | null;
   impressions: number; clicks: number; ctr: number; position: number; views: number;
+  queries: { query: string; impressions: number; position: number; clicks: number }[];
   candidate: null | { type: "rank" | "ctr"; reason: string; score: number };
 }
 interface Data {
@@ -35,6 +36,7 @@ export default function AnalyticsPage() {
   const [measuring, setMeasuring] = useState(false);
   const [msg, setMsg] = useState("");
   const [ga4List, setGa4List] = useState<{ propertyId: string; displayName: string; account: string }[] | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const selected = media.find((m) => m.id === mediaId) ?? null;
 
@@ -195,17 +197,24 @@ export default function AnalyticsPage() {
                 </div>
                 <div className="divide-y" style={{ borderColor: "rgba(56,189,248,0.06)" }}>
                   {data.candidates.map((r, i) => (
-                    <div key={i} className="px-4 py-2.5 flex items-center gap-3" style={{ borderColor: "rgba(56,189,248,0.06)" }}>
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0" style={{ background: r.candidate!.type === "rank" ? "rgba(250,204,21,0.15)" : "rgba(167,139,250,0.15)", color: r.candidate!.type === "rank" ? "#facc15" : "#a78bfa" }}>
-                        {r.candidate!.type === "rank" ? "順位UP" : "CTR改善"}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-semibold truncate block" style={{ color: "var(--text)" }}>{r.title ?? r.path}</a>
-                        <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>{r.candidate!.reason}</p>
+                    <div key={i} className="px-4 py-2.5" style={{ borderColor: "rgba(56,189,248,0.06)" }}>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0" style={{ background: r.candidate!.type === "rank" ? "rgba(250,204,21,0.15)" : "rgba(167,139,250,0.15)", color: r.candidate!.type === "rank" ? "#facc15" : "#a78bfa" }}>
+                          {r.candidate!.type === "rank" ? "順位UP" : "CTR改善"}
+                        </span>
+                        <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-semibold truncate flex-1 min-w-0" style={{ color: "var(--text)" }}>{r.title ?? r.path}</a>
+                        <p className="text-[10px] shrink-0" style={{ color: "var(--text-muted)" }}>順位 <b style={{ color: "#facc15" }}>{r.position.toFixed(1)}</b> / {num(r.impressions)}表示</p>
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>順位 <b style={{ color: "#facc15" }}>{r.position.toFixed(1)}</b> / {num(r.impressions)}表示</p>
-                      </div>
+                      {r.queries.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5 pl-[52px]">
+                          {r.queries.slice(0, 5).map((q, j) => (
+                            <span key={j} className="text-[9px] px-1.5 py-0.5 rounded-full inline-flex items-center gap-1" style={{ background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.15)", color: "var(--text)" }}>
+                              <Search size={8} style={{ color: "var(--cyan)" }} />{q.query}
+                              <b style={{ color: q.position <= 10 ? "#34d399" : "#facc15" }}>{q.position.toFixed(0)}位</b>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -230,21 +239,50 @@ export default function AnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.rows.slice(0, 100).map((r, i) => (
-                      <tr key={i} style={{ borderTop: "1px solid rgba(56,189,248,0.06)" }}>
-                        <td className="px-4 py-2 max-w-[340px]">
-                          <a href={r.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 truncate" style={{ color: "var(--text)" }}>
-                            <span className="truncate">{r.title ?? r.path}</span>
-                            <ExternalLink size={9} style={{ color: "var(--text-muted)" }} className="shrink-0" />
-                          </a>
-                        </td>
-                        <td className="text-right px-2 py-2" style={{ color: "var(--text)" }}>{num(r.impressions)}</td>
-                        <td className="text-right px-2 py-2" style={{ color: "var(--text)" }}>{num(r.clicks)}</td>
-                        <td className="text-right px-2 py-2" style={{ color: r.ctr >= 0.03 ? "#34d399" : "var(--text-muted)" }}>{(r.ctr * 100).toFixed(1)}%</td>
-                        <td className="text-right px-2 py-2" style={{ color: r.position > 0 && r.position <= 10 ? "#34d399" : r.position <= 20 ? "#facc15" : "var(--text-muted)" }}>{r.position ? r.position.toFixed(1) : "—"}</td>
-                        <td className="text-right px-4 py-2" style={{ color: "var(--text-muted)" }}>{r.views ? num(r.views) : "—"}</td>
-                      </tr>
-                    ))}
+                    {data.rows.slice(0, 100).map((r, i) => {
+                      const open = expanded === r.url;
+                      return (
+                        <Fragment key={i}>
+                          <tr onClick={() => setExpanded(open ? null : r.url)} className="cursor-pointer" style={{ borderTop: "1px solid rgba(56,189,248,0.06)", background: open ? "rgba(56,189,248,0.04)" : undefined }}>
+                            <td className="px-4 py-2 max-w-[340px]">
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate flex-1" style={{ color: "var(--text)" }}>{r.title ?? r.path}</span>
+                                {r.queries.length > 0 && <span className="text-[8px] px-1 rounded shrink-0" style={{ background: "rgba(34,211,238,0.12)", color: "var(--cyan)" }}>KW{r.queries.length}</span>}
+                                <a href={r.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="shrink-0"><ExternalLink size={9} style={{ color: "var(--text-muted)" }} /></a>
+                              </div>
+                              {/* 代表キーワード（1位のもの）を常時1つ表示 */}
+                              {r.queries[0] && <p className="text-[9px] truncate mt-0.5" style={{ color: "var(--text-muted)" }}>🔍 {r.queries[0].query}（{r.queries[0].position.toFixed(0)}位）</p>}
+                            </td>
+                            <td className="text-right px-2 py-2" style={{ color: "var(--text)" }}>{num(r.impressions)}</td>
+                            <td className="text-right px-2 py-2" style={{ color: "var(--text)" }}>{num(r.clicks)}</td>
+                            <td className="text-right px-2 py-2" style={{ color: r.ctr >= 0.03 ? "#34d399" : "var(--text-muted)" }}>{(r.ctr * 100).toFixed(1)}%</td>
+                            <td className="text-right px-2 py-2" style={{ color: r.position > 0 && r.position <= 10 ? "#34d399" : r.position <= 20 ? "#facc15" : "var(--text-muted)" }}>{r.position ? r.position.toFixed(1) : "—"}</td>
+                            <td className="text-right px-4 py-2" style={{ color: "var(--text-muted)" }}>{r.views ? num(r.views) : "—"}</td>
+                          </tr>
+                          {open && r.queries.length > 0 && (
+                            <tr style={{ background: "rgba(56,189,248,0.03)" }}>
+                              <td colSpan={6} className="px-4 py-2">
+                                <p className="text-[9px] font-bold mb-1" style={{ color: "var(--text-muted)" }}>このページが順位を取っているキーワード</p>
+                                <div className="overflow-x-auto">
+                                  <table className="text-[10px]">
+                                    <tbody>
+                                      {r.queries.map((q, j) => (
+                                        <tr key={j}>
+                                          <td className="pr-4 py-0.5" style={{ color: "var(--text)" }}>{q.query}</td>
+                                          <td className="pr-4 py-0.5 text-right" style={{ color: q.position <= 10 ? "#34d399" : "#facc15" }}>{q.position.toFixed(1)}位</td>
+                                          <td className="pr-4 py-0.5 text-right" style={{ color: "var(--text-muted)" }}>{num(q.impressions)}表示</td>
+                                          <td className="py-0.5 text-right" style={{ color: "var(--text-muted)" }}>{num(q.clicks)}クリック</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

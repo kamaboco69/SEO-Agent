@@ -32,7 +32,7 @@ export interface MetricsResult {
   resolvedProperty?: string | null;
   gscConnected?: boolean;
   ga4Connected?: boolean;
-  gsc?: { property?: string; pages?: GscRow[]; queries?: GscRow[]; error?: string } | null;
+  gsc?: { property?: string; pages?: GscRow[]; queries?: GscRow[]; pageQueries?: Record<string, GscRow[]>; error?: string } | null;
   ga4?: Ga4Row[] | { error?: string } | null;
 }
 
@@ -85,6 +85,7 @@ export interface DashboardRow {
   ctr: number;
   position: number;
   views: number;       // GA4 PV
+  queries: { query: string; impressions: number; position: number; clicks: number }[]; // このページの上位KW
   candidate: null | { type: "rank" | "ctr"; reason: string; score: number };
 }
 
