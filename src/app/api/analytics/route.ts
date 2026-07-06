@@ -2,9 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { fetchMetrics, pathOf, rewriteCandidate, type DashboardRow, type GscRow, type Ga4Row } from "@/lib/analytics";
+import { wpPosts } from "@/lib/wordpress";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+// WordPressのタイトルに含まれるHTMLエンティティを復号
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n) => { try { return String.fromCodePoint(Number(n)); } catch { return _; } })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _; } })
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&nbsp;/g, " ");
+}
 
 // GET /api/analytics?mediaId=&days= → 記事(ページ)ごとのGSC/GA4指標＋リライト候補
 export async function GET(req: NextRequest) {
@@ -51,7 +61,22 @@ export async function GET(req: NextRequest) {
     where: { mediaId, NOT: { wpViewLink: null } },
     select: { finalArticleTitle: true, wpViewLink: true },
   });
-  const titleByPath = new Map(workflows.filter((w) => w.wpViewLink).map((w) => [pathOf(w.wpViewLink as string), w.finalArticleTitle]));
+  const titleByPath = new Map<string, string | null>(workflows.filter((w) => w.wpViewLink).map((w) => [pathOf(w.wpViewLink as string), w.finalArticleTitle]));
+
+  // WordPressの全投稿・固定ページのタイトルでURL→タイトルを補完（既存記事のタイトルも表示するため）
+  if (media.wpUrl && media.wpSecret) {
+    try {
+      for (const type of ["post", "page"]) {
+        for (let page = 1; page <= 5; page++) {
+          const wp = await wpPosts(media.wpUrl, media.wpSecret, { perPage: 100, page, status: "publish", postType: type });
+          for (const p of wp.posts) titleByPath.set(pathOf(p.url), decodeEntities(p.title));
+          if (page >= wp.totalPages || wp.posts.length === 0) break;
+        }
+      }
+    } catch {
+      /* WP未応答時はタイトル補完なしで続行 */
+    }
+  }
 
   const rows: DashboardRow[] = gscPages.map((p) => {
     const path = pathOf(p.key);

@@ -36,6 +36,7 @@ export default function AnalyticsPage() {
   const [measuring, setMeasuring] = useState(false);
   const [msg, setMsg] = useState("");
   const [ga4List, setGa4List] = useState<{ propertyId: string; displayName: string; account: string }[] | null>(null);
+  const [ga4Mid, setGa4Mid] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const selected = media.find((m) => m.id === mediaId) ?? null;
@@ -81,6 +82,21 @@ export default function AnalyticsPage() {
       });
       const d = await r.json();
       if (r.ok) { setGa4List(null); await refreshMedia(); await load(); } else setMsg(`❌ ${d.error ?? "GA4紐付けに失敗しました"}`);
+    } finally { setMeasuring(false); }
+  }
+
+  async function installGa4Tag() {
+    const mid = ga4Mid.trim().toUpperCase();
+    if (!/^G-[A-Z0-9]+$/.test(mid)) { setMsg("❌ 測定ID(G-XXXX)の形式で入力してください"); return; }
+    setMeasuring(true); setMsg("");
+    try {
+      const r = await fetch("/api/analytics/measure", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId, action: "ga4_install", measurementId: mid }),
+      });
+      const d = await r.json();
+      if (r.ok) { setMsg("✅ GA4測定タグを設置しました。データ読み取りにはプロパティも選択してください。"); setGa4Mid(""); }
+      else setMsg(`❌ ${d.error ?? "GA4タグ設置に失敗しました"}`);
     } finally { setMeasuring(false); }
   }
 
@@ -158,20 +174,30 @@ export default function AnalyticsPage() {
 
         {/* GA4 picker */}
         {ga4List && (
-          <div className="glass-static rounded-xl p-4">
-            <p className="text-xs font-bold mb-2" style={{ color: "var(--text)" }}>既存のGA4プロパティを選択</p>
-            {ga4List.length === 0 ? <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>読み込み中… / アクセス可能なGA4プロパティがありません</p> : (
-              <div className="space-y-1.5 max-h-56 overflow-y-auto">
-                {ga4List.map((p) => (
-                  <button key={p.propertyId} onClick={() => attachGa4(p.propertyId)} disabled={measuring}
-                    className="w-full text-left rounded-lg px-3 py-2 flex items-center gap-2 disabled:opacity-40" style={{ background: "rgba(56,189,248,0.04)", border: "1px solid rgba(56,189,248,0.12)" }}>
-                    <Activity size={12} style={{ color: "var(--cyan)" }} />
-                    <span className="text-[11px] font-semibold flex-1" style={{ color: "var(--text)" }}>{p.displayName}</span>
-                    <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>{p.account} · {p.propertyId}</span>
-                  </button>
-                ))}
+          <div className="glass-static rounded-xl p-4 space-y-3">
+            <div>
+              <p className="text-xs font-bold mb-1" style={{ color: "var(--text)" }}>既存のGA4プロパティを紐付け（PV読み取り）</p>
+              {ga4List.length === 0 ? <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>読み込み中… / アクセス可能なGA4プロパティがありません</p> : (
+                <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                  {ga4List.map((p) => (
+                    <button key={p.propertyId} onClick={() => attachGa4(p.propertyId)} disabled={measuring}
+                      className="w-full text-left rounded-lg px-3 py-2 flex items-center gap-2 disabled:opacity-40" style={{ background: "rgba(56,189,248,0.04)", border: "1px solid rgba(56,189,248,0.12)" }}>
+                      <Activity size={12} style={{ color: "var(--cyan)" }} />
+                      <span className="text-[11px] font-semibold flex-1" style={{ color: "var(--text)" }}>{p.displayName}</span>
+                      <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>{p.account} · {p.propertyId}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="pt-2" style={{ borderTop: "1px solid rgba(56,189,248,0.1)" }}>
+              <p className="text-[10px] font-bold mb-1.5" style={{ color: "var(--text-muted)" }}>まだGA4が無いサイト → 測定タグをプラグインで設置</p>
+              <div className="flex gap-2">
+                <input value={ga4Mid} onChange={(e) => setGa4Mid(e.target.value)} placeholder="測定ID G-XXXXXXX" className="cyber-input flex-1 px-2 py-1.5 rounded-lg text-[11px]" />
+                <button onClick={installGa4Tag} disabled={measuring || !selected?.wpUrl} className="cyber-btn-primary px-3 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">タグ設置</button>
               </div>
-            )}
+              <p className="text-[9px] mt-1" style={{ color: "var(--text-muted)" }}>GA4で作成した測定ID(G-〜)を設置します。PV読み取りには上の一覧からプロパティ選択も必要です。</p>
+            </div>
           </div>
         )}
 

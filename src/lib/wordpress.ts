@@ -92,13 +92,14 @@ export async function wpSiteInfo(wpUrl: string, secret: string) {
 export async function wpPosts(
   wpUrl: string,
   secret: string,
-  opts: { perPage?: number; page?: number; search?: string; status?: string } = {}
+  opts: { perPage?: number; page?: number; search?: string; status?: string; postType?: string } = {}
 ) {
   const params: Record<string, string> = {};
   if (opts.perPage) params.per_page = String(opts.perPage);
   if (opts.page) params.page = String(opts.page);
   if (opts.search) params.search = opts.search;
   if (opts.status) params.status = opts.status;
+  if (opts.postType) params.post_type = opts.postType;
   const data = await call(wpUrl, secret, "posts", params);
   return {
     total: Number(data.total ?? 0),
