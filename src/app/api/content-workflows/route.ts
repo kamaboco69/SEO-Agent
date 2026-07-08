@@ -95,6 +95,9 @@ export async function PATCH(req: NextRequest) {
     include: includeWorkflow(),
   });
   if (!workflow) return NextResponse.json({ error: "workflow not found" }, { status: 404 });
+  // フリー執筆(メディアなし)は新パイプライン(/api/pipeline)専用。このレガシーAPIでは扱わない。
+  if (!workflow.media) return NextResponse.json({ error: "freeform workflow is not supported here" }, { status: 400 });
+  const media = workflow.media;
 
   const currentStep = workflow.steps.find((step) => step.key === stepKey);
   if (!currentStep) return NextResponse.json({ error: "step not found" }, { status: 404 });
@@ -126,7 +129,7 @@ export async function PATCH(req: NextRequest) {
       step.key === stepKey ? { ...step, revisionNote } : step
     ) as WorkflowStep[];
     const output = generateStepOutput(stepKey as WorkflowStepKey, {
-      media: workflow.media,
+      media,
       instruction: workflow.instruction,
       targetTheme: workflow.targetTheme,
       steps: stepsForContext,
@@ -169,7 +172,7 @@ export async function PATCH(req: NextRequest) {
 
   if (!isLast) {
     const output = generateStepOutput(next.key, {
-      media: workflow.media,
+      media,
       instruction: workflow.instruction,
       targetTheme: workflow.targetTheme,
       steps: workflow.steps.map((step) =>

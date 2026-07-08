@@ -55,7 +55,8 @@ interface Workflow {
   finalHtml: string | null;
   gdocId: string | null;
   gdocUrl: string | null;
-  media: MediaItem;
+  clientName: string | null;
+  media: MediaItem | null;
   steps: Step[];
 }
 
@@ -107,6 +108,10 @@ const HISTORY_STATUS: Record<string, string> = {
 export default function PipelinePage() {
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [selectedMediaId, setSelectedMediaId] = useState<string>("");
+  // 執筆モード：media=連携メディアの記事 / free=フリー執筆（単発・クライアント依頼→Googleドキュメント納品）
+  const [mode, setMode] = useState<"media" | "free">("media");
+  const [freeClient, setFreeClient] = useState("");
+  const [freeSite, setFreeSite] = useState("");
   const [theme, setTheme] = useState("");
   const [instruction, setInstruction] = useState("");
   const [wordCount, setWordCount] = useState("");
@@ -137,14 +142,15 @@ export default function PipelinePage() {
     }
   }, []);
 
-  const loadHistory = useCallback(async (mediaId: string) => {
-    if (!mediaId) return setHistory([]);
-    const res = await fetch(`/api/pipeline?mediaId=${mediaId}`);
+  const loadHistory = useCallback(async () => {
+    const url = mode === "free" ? "/api/pipeline?freeform=1" : selectedMediaId ? `/api/pipeline?mediaId=${selectedMediaId}` : null;
+    if (!url) return setHistory([]);
+    const res = await fetch(url);
     if (res.ok) setHistory(await res.json());
-  }, []);
+  }, [mode, selectedMediaId]);
 
   useEffect(() => { loadMedia(); }, [loadMedia]);
-  useEffect(() => { loadHistory(selectedMediaId); }, [selectedMediaId, loadHistory]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
   useEffect(() => {
     fetch("/api/ai-company/entitlement")
       .then((r) => (r.ok ? r.json() : null))
@@ -228,7 +234,7 @@ export default function PipelinePage() {
     }
     // 完了したらアコーディオンは全て閉じる
     if (wf.status === "completed") setExpanded(null);
-    loadHistory(selectedMediaId);
+    loadHistory();
     recheckEntitlement();
     return wf;
   }
@@ -250,17 +256,22 @@ export default function PipelinePage() {
   }
 
   async function runPipeline() {
-    if (!selectedMediaId || running) return;
+    if (running) return;
+    if (mode === "media" && !selectedMediaId) return;
+    if (mode === "free" && !theme.trim()) { setPipelineError("フリー執筆はテーマ・キーワードの入力が必須です"); return; }
     stopRef.current = false;
     setPipelineError(null);
     setRunning(true);
     setWorkflow(null);
     setExpanded(null);
     try {
+      const payload = mode === "free"
+        ? { freeform: true, targetTheme: theme.trim(), clientName: freeClient.trim() || null, clientSite: freeSite.trim() || null, instruction: instruction.trim(), targetWordCount: wordCount ? Number(wordCount) : null }
+        : { mediaId: selectedMediaId, instruction: instruction.trim(), targetTheme: theme.trim() || null, targetWordCount: wordCount ? Number(wordCount) : null };
       const res = await fetch("/api/pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaId: selectedMediaId, instruction: instruction.trim(), targetTheme: theme.trim() || null, targetWordCount: wordCount ? Number(wordCount) : null }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
@@ -298,7 +309,7 @@ export default function PipelinePage() {
     await fetch(`/api/pipeline?id=${workflow.id}`, { method: "DELETE" });
     setWorkflow(null);
     setExpanded(null);
-    loadHistory(selectedMediaId);
+    loadHistory();
   }
 
   async function wpAction(action: "wp_draft" | "wp_publish") {
@@ -384,6 +395,20 @@ export default function PipelinePage() {
       <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr] gap-4 p-4 overflow-hidden">
         {/* Left: media + controls */}
         <div className="flex flex-col gap-4 min-h-0">
+          {/* 執筆モード切替 */}
+          <div className="glass-static rounded-xl p-1.5 shrink-0 flex gap-1">
+            {([["media", "メディア記事"], ["free", "フリー執筆"]] as const).map(([m, label]) => (
+              <button key={m} onClick={() => { setMode(m); setWorkflow(null); setExpanded(null); setPipelineError(null); }}
+                className="flex-1 py-2 rounded-lg text-[11px] font-bold transition-colors"
+                style={mode === m
+                  ? { background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.4)", color: "#34d399" }
+                  : { border: "1px solid transparent", color: "var(--text-muted)" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "media" ? (
           <div className="glass-static rounded-xl p-4 shrink-0 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-xs font-bold" style={{ color: "var(--text)" }}>対象メディア</p>
@@ -447,11 +472,23 @@ export default function PipelinePage() {
               </div>
             )}
           </div>
+          ) : (
+          <div className="glass-static rounded-xl p-4 shrink-0 space-y-2">
+            <p className="text-xs font-bold" style={{ color: "var(--text)" }}>フリー執筆（単発・クライアント依頼）</p>
+            <input value={freeClient} onChange={(e) => setFreeClient(e.target.value)} placeholder="クライアント名（任意）" className="cyber-input w-full px-3 py-2 rounded-lg text-xs" />
+            <input value={freeSite} onChange={(e) => setFreeSite(e.target.value)} placeholder="掲載先サイトURL（任意・参考として分析）" className="cyber-input w-full px-3 py-2 rounded-lg text-xs" />
+            <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+              メディア連携なしで、指定テーマからKW調査→競合調査→構成→執筆まで一気通貫で実行します。完成記事は<b style={{ color: "#22d3ee" }}>Googleドキュメント</b>に保存されます（WordPress保存・画像生成は対象外）。
+            </p>
+          </div>
+          )}
 
           <div className="glass-static rounded-xl p-4 shrink-0 space-y-3">
             <div>
-              <label className="block text-[10px] font-bold mb-1.5" style={{ color: "var(--text-muted)" }}>テーマ（任意）</label>
-              <input value={theme} onChange={(e) => setTheme(e.target.value)} placeholder="例: 法人向けSaaS導入" className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
+              <label className="block text-[10px] font-bold mb-1.5" style={{ color: mode === "free" ? "#34d399" : "var(--text-muted)" }}>
+                {mode === "free" ? "テーマ・キーワード（必須）" : "テーマ（任意）"}
+              </label>
+              <input value={theme} onChange={(e) => setTheme(e.target.value)} placeholder={mode === "free" ? "例: 相続放棄 手続き 期限" : "例: 法人向けSaaS導入"} className="cyber-input w-full px-3 py-2 rounded-lg text-sm" />
             </div>
             <div>
               <label className="block text-[10px] font-bold mb-1.5" style={{ color: "var(--text-muted)" }}>指示（任意）</label>
@@ -504,14 +541,19 @@ export default function PipelinePage() {
               </div>
             ) : (
               <>
-                <button onClick={runPipeline} disabled={!selectedMediaId || running || entLoading}
+                <button onClick={runPipeline} disabled={(mode === "media" ? !selectedMediaId : !theme.trim()) || running || entLoading}
                   className="cyber-btn-primary w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold disabled:opacity-40">
                   {running || entLoading ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                   {running ? "実行中…" : entLoading ? "確認中…" : "一気通貫で実行"}
                 </button>
-                {selectedMedia && (
+                {mode === "media" && selectedMedia && (
                   <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
                     {selectedMedia.name}（{selectedMedia.domain}）を分析し、不足記事の特定→KW/競合調査→構成→執筆まで自動実行します。
+                  </p>
+                )}
+                {mode === "free" && (
+                  <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    テーマ「{theme.trim() || "未入力"}」でKW/競合調査→構成→執筆まで自動実行し、Googleドキュメントに保存します。
                   </p>
                 )}
                 {entitlement?.usage && entitlement.usage.limit > 0 && (
@@ -767,7 +809,8 @@ function FlowOverview({ canRun }: { canRun: boolean }) {
 type PhaseState = "done" | "active" | "pending" | "skip";
 
 function ProductionSteps({ workflow, running }: { workflow: Workflow; running: boolean }) {
-  const wpConnected = Boolean(workflow.media.wpUrl);
+  const freeform = !workflow.media; // フリー執筆（Googleドキュメント納品）
+  const wpConnected = Boolean(workflow.media?.wpUrl);
   const aiDone = aiStepsDone(workflow);
   const wpSaved = Boolean(workflow.wpPostId);
   const published = workflow.wpPublished;
@@ -782,25 +825,27 @@ function ProductionSteps({ workflow, running }: { workflow: Workflow; running: b
     {
       key: "gdoc", icon: FileText, color: "#22d3ee", label: "Googleドキュメントに保存",
       state: workflow.gdocId ? "done" : draftDone ? "skip" : "pending",
-      note: workflow.gdocId ? "保存済み" : "記事執筆の完了時に自動保存",
+      note: workflow.gdocId ? (freeform ? "納品ドキュメント保存済み" : "保存済み") : "記事執筆の完了時に自動保存",
       link: workflow.gdocUrl,
     },
     {
       key: "images", icon: ImageIcon, color: "#f472b6", label: "画像を自動生成・挿入",
       state: wpSaved ? "done" : wpActive ? "active" : wpConnected ? "pending" : "skip",
       note: wpSaved ? (workflow.imagesGenerated ? "gpt-image-1で生成・挿入済み" : "挿入対象の画像コメントなし")
-        : wpConnected ? "gpt-image-1で自動生成し記事に挿入" : "WordPress未接続のためスキップ",
+        : wpConnected ? "gpt-image-1で自動生成し記事に挿入"
+        : freeform ? "フリー執筆は対象外（画像生成プロンプトを活用）" : "WordPress未接続のためスキップ",
     },
     {
       key: "wp_draft", icon: Upload, color: "#a78bfa", label: "WordPressに下書き保存",
       state: wpSaved ? "done" : wpActive ? "active" : wpConnected ? "pending" : "skip",
-      note: wpConnected ? (wpSaved ? "下書き保存済み" : "装飾HTMLを自動で下書き保存") : "WordPress未接続（左パネルで接続）",
+      note: wpConnected ? (wpSaved ? "下書き保存済み" : "装飾HTMLを自動で下書き保存")
+        : freeform ? "フリー執筆は対象外（Googleドキュメント納品）" : "WordPress未接続（プラグインで連携）",
       link: wpSaved ? workflow.wpEditLink : null,
     },
     {
       key: "publish", icon: Rocket, color: "#34d399", label: "WordPressに公開",
-      state: published ? "done" : "pending",
-      note: published ? "公開済み" : wpSaved ? "内容を確認して「公開する」で実行" : "下書き保存後に公開できます",
+      state: published ? "done" : freeform ? "skip" : "pending",
+      note: published ? "公開済み" : freeform ? "フリー執筆は対象外" : wpSaved ? "内容を確認して「公開する」で実行" : "下書き保存後に公開できます",
       link: published ? workflow.wpViewLink : null,
     },
   ];
@@ -884,7 +929,8 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel, onStop, onR
   }
 
   if (s === "completed") {
-    const wpConnected = Boolean(workflow.media.wpUrl);
+    const freeform = !workflow.media;
+    const wpConnected = Boolean(workflow.media?.wpUrl);
     const saved = Boolean(workflow.wpPostId);
     const swellHtml = ((workflow.steps.find((st) => st.key === "swell_format")?.output ?? {}) as { html?: string }).html ?? "";
     const previewHtml = workflow.finalHtml || swellHtml;
@@ -894,7 +940,8 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel, onStop, onR
           <Check size={16} style={{ color: "#34d399" }} />
           <p className="text-xs font-bold" style={{ color: "#34d399" }}>
             {workflow.wpPublished ? "✅ WordPressに公開しました"
-              : saved ? "✅ WordPress下書き保存完了" : "🎉 記事が完成しました"}
+              : saved ? "✅ WordPress下書き保存完了"
+              : freeform ? "🎉 記事が完成しました（Googleドキュメントに納品済み）" : "🎉 記事が完成しました"}
           </p>
         </div>
 
@@ -915,7 +962,9 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel, onStop, onR
 
         {!wpConnected && (
           <p className="text-[10px] mb-2" style={{ color: "var(--text-muted)" }}>
-            WordPressに自動保存するには、対象サイトに「SEO Agent Connector」プラグインを入れて有効化してください（自動連携）。
+            {freeform
+              ? "Googleドキュメントを開いて納品できます。「プレビュー」やHTMLソースのコピーから任意のCMSにも貼り付け可能です。"
+              : "WordPressに自動保存するには、対象サイトに「SEO Agent Connector」プラグインを入れて有効化してください（自動連携）。"}
           </p>
         )}
 

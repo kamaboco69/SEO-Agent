@@ -138,6 +138,23 @@ async function buildHtmlWithImages(
   return { html, count };
 }
 
+// フリー執筆（メディアなし）用の仮想メディア。AIステップのコンテキストとして使う。
+function virtualMedia(wf: { clientName: string | null; clientSite: string | null }) {
+  const host = wf.clientSite
+    ? wf.clientSite.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase()
+    : "";
+  return {
+    name: wf.clientName?.trim() || "フリー執筆",
+    domain: host,
+    description: null,
+    audience: null,
+    tone: null,
+    mainCategories: [] as never,
+    wpUrl: wf.clientSite?.trim() || null,
+    wpSecret: null,
+  };
+}
+
 // 未生成の最初のAIステップ
 function firstPendingStep(wf: WfWithSteps) {
   return workflowSteps
@@ -146,7 +163,7 @@ function firstPendingStep(wf: WfWithSteps) {
 }
 
 // 全自動：AIステップが残る、またはWP下書き保存が未実施なら in_progress。それ以外は completed。
-function computeStatus(wf: WfWithSteps & { media?: { wpUrl?: string | null; wpSecret?: string | null } }): "in_progress" | "completed" {
+function computeStatus(wf: WfWithSteps & { media?: { wpUrl?: string | null; wpSecret?: string | null } | null }): "in_progress" | "completed" {
   if (firstPendingStep(wf)) return "in_progress";
   const wpConnected = Boolean(wf.media?.wpUrl && wf.media?.wpSecret);
   if (wpConnected && !wf.wpPostId) return "in_progress"; // WP自動保存が残っている
@@ -157,13 +174,14 @@ function computeStatus(wf: WfWithSteps & { media?: { wpUrl?: string | null; wpSe
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   const mediaId = req.nextUrl.searchParams.get("mediaId");
+  const freeform = req.nextUrl.searchParams.get("freeform") === "1";
   if (id) {
     const wf = await prisma.contentWorkflow.findUnique({ where: { id }, include: includeWorkflow() });
     if (!wf) return NextResponse.json({ error: "not found" }, { status: 404 });
     return NextResponse.json(wf);
   }
   const workflows = await prisma.contentWorkflow.findMany({
-    where: mediaId ? { mediaId } : undefined,
+    where: freeform ? { mediaId: null } : mediaId ? { mediaId } : undefined,
     orderBy: { updatedAt: "desc" },
     include: includeWorkflow(),
   });
@@ -182,7 +200,8 @@ export async function POST(req: NextRequest) {
   const targetTheme = body.targetTheme ? String(body.targetTheme).trim() : null;
   const rawWc = Number(body.targetWordCount);
   const targetWordCount = Number.isFinite(rawWc) && rawWc > 0 ? Math.min(20000, Math.round(rawWc)) : null;
-  if (!mediaId) return NextResponse.json({ error: "mediaId is required" }, { status: 400 });
+  const freeform = Boolean(body.freeform);
+  if (!mediaId && !freeform) return NextResponse.json({ error: "mediaId is required" }, { status: 400 });
 
   const pre = await reportAiCompanyUsage(email);
   if (pre.ok && !pre.allowed) {
@@ -190,6 +209,48 @@ export async function POST(req: NextRequest) {
       { error: pre.reason ?? "今月のトークン上限に達しています", overLimit: true, usedTokens: pre.usedTokens, limit: pre.limit },
       { status: 402 }
     );
+  }
+
+  // フリー執筆（メディアなし・単発依頼）：メディア分析をスキップし、指定テーマで直接執筆に入る。
+  // WordPressには保存せず、執筆完了時にGoogleドキュメントへ保存される。
+  if (freeform) {
+    const theme = targetTheme;
+    if (!theme) return NextResponse.json({ error: "テーマ・キーワードを入力してください" }, { status: 400 });
+    const clientName = body.clientName ? String(body.clientName).trim() : null;
+    const clientSite = body.clientSite ? String(body.clientSite).trim() : null;
+    const freeInstruction = String(body.instruction ?? "").trim() || `「${theme}」について、検索上位を狙える記事を書く`;
+
+    const workflow = await prisma.contentWorkflow.create({
+      data: {
+        clientName,
+        clientSite,
+        instruction: freeInstruction,
+        targetTheme: theme,
+        targetWordCount,
+        selectedArticle: theme,
+        automationMode: "staged",
+        status: "in_progress",
+        currentStep: "keyword_research",
+        steps: {
+          create: workflowSteps.map((step) => ({
+            key: step.key,
+            label: step.label,
+            status: step.key === "media_analysis" ? "done" : "pending",
+            input: { instruction: freeInstruction, targetTheme: theme },
+            output: (step.key === "media_analysis"
+              ? {
+                  summary: `フリー執筆モード：テーマ「${theme}」で直接執筆します。${clientName ? `（依頼元: ${clientName}）` : ""}`,
+                  recommendedArticle: theme,
+                  rationale: "メディア分析をスキップし、指定テーマをそのまま採用",
+                  _engine: "freeform",
+                }
+              : {}) as never,
+          })),
+        },
+      },
+      include: includeWorkflow(),
+    });
+    return NextResponse.json(workflow, { status: 201 });
   }
 
   const media = await prisma.media.findUnique({ where: { id: mediaId } });
@@ -249,6 +310,9 @@ export async function PATCH(req: NextRequest) {
   // WordPress 下書き保存 / 公開（手動トリガー。全自動フローでは run_next が自動保存する）
   if (action === "wp_draft" || action === "wp_publish") {
     const media = workflow.media;
+    if (!media) {
+      return NextResponse.json({ error: "フリー執筆の記事はWordPress保存の対象外です（Googleドキュメントに保存されています）" }, { status: 400 });
+    }
     if (!media.wpUrl || !media.wpSecret) {
       return NextResponse.json({ error: "このメディアはWordPress未接続です" }, { status: 400 });
     }
@@ -301,7 +365,7 @@ export async function PATCH(req: NextRequest) {
     if (!reviseKey) return NextResponse.json({ error: "stepKey is required" }, { status: 400 });
     const stepsForContext = workflow.steps.map((step) => (step.key === reviseKey ? { ...step, revisionNote } : step)) as WorkflowStep[];
     const { output, usage, aiError } = await runStepWithAI(reviseKey as WorkflowStepKey, {
-      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: stepsForContext,
+      media: workflow.media ?? virtualMedia(workflow), instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: stepsForContext,
     });
     await reportAiCompanyUsage(email, usage);
     if (aiError) return NextResponse.json({ error: aiErrorMessage(aiError), aiFailed: true }, { status: 502 });
@@ -331,7 +395,7 @@ export async function PATCH(req: NextRequest) {
   const nextStep = firstPendingStep(workflow);
   if (nextStep) {
     const { output, usage, aiError } = await runStepWithAI(nextStep.key as WorkflowStepKey, {
-      media: workflow.media, instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: workflow.steps as WorkflowStep[],
+      media: workflow.media ?? virtualMedia(workflow), instruction: workflow.instruction, targetTheme: workflow.targetTheme, targetWordCount: workflow.targetWordCount, steps: workflow.steps as WorkflowStep[],
     });
     await reportAiCompanyUsage(email, usage);
     // AI失敗（残高不足等）→ 雛形を保存せず、in_progressのまま原因を返す（チャージ後に続きから再開できる）
@@ -364,9 +428,9 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json(updated);
   }
 
-  // 全AIステップ完了 → WordPressへ自動下書き保存（画像生成込み）
+  // 全AIステップ完了 → WordPressへ自動下書き保存（画像生成込み）。フリー執筆(media=null)は対象外。
   const media = workflow.media;
-  if (media.wpUrl && media.wpSecret && !workflow.wpPostId) {
+  if (media && media.wpUrl && media.wpSecret && !workflow.wpPostId) {
     const swell = workflow.steps.find((s) => s.key === "swell_format");
     const swellOut = (swell?.output ?? {}) as { html?: string; title?: string };
     const baseHtml = swellOut.html ?? workflow.finalArticle ?? "";

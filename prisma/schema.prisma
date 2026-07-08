@@ -155,8 +155,10 @@ model Media {
 
 model ContentWorkflow {
   id                String   @id @default(cuid())
-  mediaId           String
-  media             Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  mediaId           String?
+  media             Media?   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  clientName        String?
+  clientSite        String?
   instruction       String
   targetTheme       String?
   targetWordCount   Int?
