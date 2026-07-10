@@ -249,6 +249,7 @@ export async function syncCalendarEvents(media: Media, log: string[]): Promise<v
         `テーマ: ${e.theme}`,
         media.scheduleWordCount ? `目標文字数: ${media.scheduleWordCount.toLocaleString()}字` : "目標文字数: AIが自動判断",
         "この日に自動で執筆され、完成後はWordPressに下書き保存されます。",
+        "※AIが自動実行するメモです。時間はブロックしません（「予定なし」扱い）。ミーティング等の日程調整には影響しません。",
       ].join("\n"),
     });
     if (!r.ok) {
