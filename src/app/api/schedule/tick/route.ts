@@ -15,7 +15,10 @@ export const maxDuration = 300;
 //
 // 認証: Vercel Cron は Authorization: Bearer ${CRON_SECRET} を自動付与。自己チェーン/手動は x-cron-secret。
 
-const TIME_BUDGET_MS = 230_000; // maxDuration 300s に対し、チェーン発火の余裕を残す
+// 1ステップは最長で4分前後かかりうる（執筆・装飾HTMLのストリーミング、画像生成込みWP保存）。
+// maxDuration 300s を超えないよう「経過45秒以内のときだけ新しいステップを開始」し、
+// それ以降は自己チェーンで新しい実行時間枠に引き継ぐ。
+const SOFT_BUDGET_MS = 45_000;
 const MAX_CHAIN = 40;
 const JST = 9 * 3600 * 1000;
 
@@ -166,18 +169,21 @@ async function runTick(req: NextRequest) {
   let advancedSteps = 0;
   const finished: string[] = [];
   let hadAiError = false;
+  let needMore = false;
 
-  // 1) 期日が来たメディアの記事作成を開始（チェーン継続時はスキップして進行だけ担当）
+  // 1) 期日が来たメディアの記事作成を開始
+  //（チェーン継続時も実行する。作成済み分は「進行中あり」「間隔未達」ガードで二重作成されない）
   const createdIds: string[] = [];
-  if (chain === 0) {
-    const targets = await prisma.media.findMany({
-      where: forceMediaId ? { id: forceMediaId, scheduleEnabled: true } : { scheduleEnabled: true },
-    });
-    for (const media of targets) {
-      if (Date.now() - started > TIME_BUDGET_MS) break;
-      const wf = await createIfDue(media, Boolean(forceMediaId), log);
-      if (wf) createdIds.push(wf.id);
+  const targets = await prisma.media.findMany({
+    where: forceMediaId ? { id: forceMediaId, scheduleEnabled: true } : { scheduleEnabled: true },
+  });
+  for (const media of targets) {
+    if (Date.now() - started > SOFT_BUDGET_MS) {
+      needMore = true; // 残りメディアの判定は次の実行枠で
+      break;
     }
+    const wf = await createIfDue(media, Boolean(forceMediaId), log);
+    if (wf) createdIds.push(wf.id);
   }
 
   // 2) 進行中のスケジュール記事を進める（古い順）
@@ -187,11 +193,11 @@ async function runTick(req: NextRequest) {
     include: includeWorkflow(),
   });
 
-  let needMore = false;
   for (let wf of pending as WorkflowFull[]) {
     const email = wf.media?.scheduleOwnerEmail ?? null;
     for (;;) {
-      if (Date.now() - started > TIME_BUDGET_MS) {
+      // ステップ開始前に残り時間を確認（開始後の長時間ステップでmaxDurationを超えないため）
+      if (Date.now() - started > SOFT_BUDGET_MS) {
         needMore = true;
         break;
       }
