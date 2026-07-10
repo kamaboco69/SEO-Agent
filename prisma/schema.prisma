@@ -147,6 +147,12 @@ model Media {
   gscProperty       String?
   ga4PropertyId     String?
   analyticsConnectedAt DateTime?
+  scheduleEnabled     Boolean   @default(false)
+  schedulePerMonth    Int       @default(2)
+  scheduleWordCount   Int?
+  scheduleInstruction String?
+  scheduleOwnerEmail  String?
+  scheduleLastRunAt   DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -159,6 +165,7 @@ model ContentWorkflow {
   media             Media?   @relation(fields: [mediaId], references: [id], onDelete: Cascade)
   clientName        String?
   clientSite        String?
+  origin            String   @default("manual")
   instruction       String
   targetTheme       String?
   targetWordCount   Int?

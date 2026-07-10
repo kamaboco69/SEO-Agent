@@ -5,7 +5,7 @@ import {
   Sparkles, Loader2, Play, RefreshCw, Plus, Check, Copy,
   Search, Users, Tag, ListTree, SlidersHorizontal, PenLine, FileSearch,
   Globe, ChevronDown, ChevronRight, Lock, Crown, ExternalLink, Code2,
-  Image as ImageIcon, Eye, Rocket, MousePointerClick, FileText, Upload, Square,
+  Image as ImageIcon, Eye, Rocket, MousePointerClick, FileText, Upload, Square, CalendarClock,
 } from "lucide-react";
 
 interface Entitlement {
@@ -25,6 +25,12 @@ interface MediaItem {
   aiCompanyMediaId: string | null;
   wpUrl?: string | null;
   wpConnectedAt?: string | null;
+  scheduleEnabled?: boolean;
+  schedulePerMonth?: number;
+  scheduleWordCount?: number | null;
+  scheduleInstruction?: string | null;
+  scheduleLastRunAt?: string | null;
+  scheduledThisMonth?: number;
   _count?: { workflows: number };
 }
 
@@ -38,6 +44,7 @@ interface Step {
 
 interface Workflow {
   id: string;
+  origin?: string;
   instruction: string;
   targetTheme: string | null;
   status: string;
@@ -132,6 +139,13 @@ export default function PipelinePage() {
   const stopRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const [pipelineError, setPipelineError] = useState<string | null>(null);
+  // 自動スケジュール設定（選択中メディアの値を編集）
+  const [schedEnabled, setSchedEnabled] = useState(false);
+  const [schedPerMonth, setSchedPerMonth] = useState("2");
+  const [schedWordCount, setSchedWordCount] = useState("");
+  const [schedInstruction, setSchedInstruction] = useState("");
+  const [schedSaving, setSchedSaving] = useState(false);
+  const [schedMsg, setSchedMsg] = useState<string | null>(null);
 
   const loadMedia = useCallback(async () => {
     const res = await fetch("/api/media");
@@ -151,6 +165,49 @@ export default function PipelinePage() {
 
   useEffect(() => { loadMedia(); }, [loadMedia]);
   useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  // メディアを切り替えたらスケジュール設定フォームをそのメディアの保存値に同期
+  useEffect(() => {
+    const m = media.find((x) => x.id === selectedMediaId);
+    if (!m) return;
+    setSchedEnabled(Boolean(m.scheduleEnabled));
+    setSchedPerMonth(String(m.schedulePerMonth ?? 2));
+    setSchedWordCount(m.scheduleWordCount ? String(m.scheduleWordCount) : "");
+    setSchedInstruction(m.scheduleInstruction ?? "");
+    setSchedMsg(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMediaId]);
+
+  async function saveSchedule() {
+    if (!selectedMediaId || schedSaving) return;
+    setSchedSaving(true);
+    setSchedMsg(null);
+    try {
+      const res = await fetch("/api/media", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mediaId: selectedMediaId,
+          schedule: {
+            enabled: schedEnabled,
+            perMonth: Number(schedPerMonth) || 2,
+            wordCount: schedWordCount ? Number(schedWordCount) : null,
+            instruction: schedInstruction.trim() || null,
+          },
+        }),
+      });
+      if (res.ok) {
+        const updated = (await res.json()) as MediaItem;
+        setMedia((prev) => prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)));
+        setSchedMsg(schedEnabled ? "保存しました。毎日の定時チェックで期日が来たら自動作成されます。" : "自動スケジュールをオフにしました。");
+      } else {
+        const e = await res.json().catch(() => ({}));
+        alert(e.error ?? "スケジュール設定の保存に失敗しました");
+      }
+    } finally {
+      setSchedSaving(false);
+    }
+  }
   useEffect(() => {
     fetch("/api/ai-company/entitlement")
       .then((r) => (r.ok ? r.json() : null))
@@ -469,6 +526,48 @@ export default function PipelinePage() {
                     対象サイトに専用プラグイン「SEO Agent Connector」を入れて有効化すると、自動で連携されます（URL・キーの入力は不要）。
                   </p>
                 )}
+
+                {/* 自動スケジュール：月n本・文字数を指定して定期的に自動執筆（完成後WPへ下書き保存） */}
+                <div className="pt-2 mt-2 space-y-1.5" style={{ borderTop: "1px solid rgba(56,189,248,0.1)" }}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <CalendarClock size={11} style={{ color: schedEnabled ? "#facc15" : "var(--text-muted)" }} />
+                      <span className="text-[10px] font-bold" style={{ color: schedEnabled ? "#facc15" : "var(--text-muted)" }}>自動スケジュール</span>
+                    </div>
+                    <button onClick={() => setSchedEnabled((v) => !v)}
+                      className="px-2 py-0.5 rounded-full text-[9px] font-bold transition-colors"
+                      style={schedEnabled
+                        ? { background: "rgba(250,204,21,0.15)", border: "1px solid rgba(250,204,21,0.45)", color: "#facc15" }
+                        : { background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.16)", color: "var(--text-muted)" }}>
+                      {schedEnabled ? "ON" : "OFF"}
+                    </button>
+                  </div>
+                  {schedEnabled && (
+                    <>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[9px] shrink-0" style={{ color: "var(--text-muted)" }}>月</span>
+                        <input value={schedPerMonth} onChange={(e) => setSchedPerMonth(e.target.value.replace(/[^0-9]/g, ""))}
+                          inputMode="numeric" className="cyber-input w-12 px-2 py-1 rounded-lg text-xs text-center" />
+                        <span className="text-[9px] shrink-0" style={{ color: "var(--text-muted)" }}>本</span>
+                        <input value={schedWordCount} onChange={(e) => setSchedWordCount(e.target.value.replace(/[^0-9]/g, ""))}
+                          inputMode="numeric" placeholder="文字数 例:5000" className="cyber-input flex-1 min-w-0 px-2 py-1 rounded-lg text-xs" />
+                        <span className="text-[9px] shrink-0" style={{ color: "var(--text-muted)" }}>字</span>
+                      </div>
+                      <input value={schedInstruction} onChange={(e) => setSchedInstruction(e.target.value)}
+                        placeholder="AIへの指示（任意）例: 比較記事を優先" className="cyber-input w-full px-2 py-1 rounded-lg text-[10px]" />
+                      <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                        テーマはAIが既存記事のギャップから自動選定し、月{Number(schedPerMonth) || 2}本を均等な間隔で自動執筆→WordPressに下書き保存します（文字数未指定ならAIが判断）。
+                        今月の実績: <b style={{ color: "#facc15" }}>{selectedMedia.scheduledThisMonth ?? 0} / {Number(schedPerMonth) || 2} 本</b>
+                      </p>
+                    </>
+                  )}
+                  <button onClick={saveSchedule} disabled={schedSaving}
+                    className="cyber-btn w-full py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40 flex items-center justify-center gap-1.5">
+                    {schedSaving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                    スケジュール設定を保存
+                  </button>
+                  {schedMsg && <p className="text-[9px]" style={{ color: "#34d399" }}>{schedMsg}</p>}
+                </div>
               </div>
             )}
           </div>
@@ -585,7 +684,12 @@ export default function PipelinePage() {
                 <button key={h.id} onClick={() => openWorkflow(h.id)}
                   className="w-full text-left px-4 py-2.5 transition-colors" style={{ borderBottom: "1px solid rgba(56,189,248,0.06)", background: workflow?.id === h.id ? "rgba(56,189,248,0.06)" : "transparent" }}>
                   <p className="text-[11px] font-semibold truncate" style={{ color: "var(--text)" }}>{h.finalArticleTitle ?? h.selectedArticle ?? h.targetTheme ?? h.instruction}</p>
-                  <p className="text-[9px] mt-0.5" style={{ color: h.status === "completed" ? "#34d399" : h.status.startsWith("awaiting") ? "#facc15" : "var(--text-muted)" }}>{HISTORY_STATUS[h.status] ?? h.status}</p>
+                  <p className="text-[9px] mt-0.5 flex items-center gap-1.5" style={{ color: h.status === "completed" ? "#34d399" : h.status.startsWith("awaiting") ? "#facc15" : "var(--text-muted)" }}>
+                    {h.origin === "schedule" && (
+                      <span className="px-1 rounded font-bold" style={{ background: "rgba(250,204,21,0.15)", color: "#facc15" }}>自動</span>
+                    )}
+                    {HISTORY_STATUS[h.status] ?? h.status}
+                  </p>
                 </button>
               ))}
             </div>
