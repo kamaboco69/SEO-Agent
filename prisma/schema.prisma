@@ -157,6 +157,25 @@ model Media {
   updatedAt         DateTime @updatedAt
 
   workflows         ContentWorkflow[]
+  plans             ScheduledArticle[]
+}
+
+// 自動スケジュールの執筆予定（カレンダー表示・AI秘書のGoogleカレンダー連携の単位）。
+// テーマは予定作成時にAIが提案し、plannedDate（JSTの日付）が来たらcronが執筆を開始する。
+model ScheduledArticle {
+  id              String   @id @default(cuid())
+  mediaId         String
+  media           Media    @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  plannedDate     DateTime // JSTの日付（そのJST日の00:00をUTCで保持）
+  theme           String
+  status          String   @default("planned") // planned / generating / done / failed
+  workflowId      String?
+  calendarEventId String?  // AI秘書（AICompany）のGoogleカレンダーのイベントID
+  calendarUrl     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([mediaId, plannedDate])
 }
 
 model ContentWorkflow {

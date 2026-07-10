@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { reconcilePlan, syncCalendarEvents } from "@/lib/schedulePlan";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // スケジュール保存時のプラン生成（AIテーマ提案＋カレンダー登録）に余裕を持たせる
 
 const JST = 9 * 3600 * 1000;
 
@@ -135,7 +137,17 @@ export async function PATCH(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(updated);
+  // 予定表を即時整合：有効なら今月・来月の予定（日付＋AIテーマ）を生成しAI秘書カレンダーへ登録、
+  // 無効なら未実行の予定を取り消す。失敗しても設定自体は保存済み（cronが毎日再整合する）。
+  const planLog: string[] = [];
+  try {
+    await reconcilePlan(updated, planLog);
+    await syncCalendarEvents(updated, planLog);
+  } catch {
+    planLog.push("予定表の更新に失敗しました（毎日の定時チェックで自動リトライされます）");
+  }
+
+  return NextResponse.json({ ...updated, planLog });
 }
 
 export async function POST(req: NextRequest) {

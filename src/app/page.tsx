@@ -197,9 +197,14 @@ export default function PipelinePage() {
         }),
       });
       if (res.ok) {
-        const updated = (await res.json()) as MediaItem;
+        const updated = (await res.json()) as MediaItem & { planLog?: string[] };
         setMedia((prev) => prev.map((m) => (m.id === updated.id ? { ...m, ...updated } : m)));
-        setSchedMsg(schedEnabled ? "保存しました。毎日の定時チェックで期日が来たら自動作成されます。" : "自動スケジュールをオフにしました。");
+        const planLog = updated.planLog ?? [];
+        setSchedMsg(
+          planLog.length
+            ? planLog.join(" ／ ")
+            : schedEnabled ? "保存しました。予定日に自動執筆されます。" : "自動スケジュールをオフにしました。"
+        );
       } else {
         const e = await res.json().catch(() => ({}));
         alert(e.error ?? "スケジュール設定の保存に失敗しました");
@@ -556,7 +561,7 @@ export default function PipelinePage() {
                       <input value={schedInstruction} onChange={(e) => setSchedInstruction(e.target.value)}
                         placeholder="AIへの指示（任意）例: 比較記事を優先" className="cyber-input w-full px-2 py-1 rounded-lg text-[10px]" />
                       <p className="text-[9px] leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                        テーマはAIが既存記事のギャップから自動選定し、月{Number(schedPerMonth) || 2}本を均等な間隔で自動執筆→WordPressに下書き保存します（文字数未指定ならAIが判断）。
+                        保存すると今月・来月の執筆予定（日付＋AIが提案するテーマ）が作成され、AI秘書（AICompany）のGoogleカレンダーにも登録。予定日に自動執筆→WordPressに下書き保存します。
                         今月の実績: <b style={{ color: "#facc15" }}>{selectedMedia.scheduledThisMonth ?? 0} / {Number(schedPerMonth) || 2} 本</b>
                       </p>
                     </>
@@ -564,9 +569,12 @@ export default function PipelinePage() {
                   <button onClick={saveSchedule} disabled={schedSaving}
                     className="cyber-btn w-full py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40 flex items-center justify-center gap-1.5">
                     {schedSaving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                    スケジュール設定を保存
+                    {schedSaving ? "保存＆予定を作成中…" : "スケジュール設定を保存"}
                   </button>
-                  {schedMsg && <p className="text-[9px]" style={{ color: "#34d399" }}>{schedMsg}</p>}
+                  {schedMsg && <p className="text-[9px] leading-relaxed" style={{ color: "#34d399" }}>{schedMsg}</p>}
+                  <a href="/calendar" className="block text-[9px] font-bold" style={{ color: "#fb923c" }}>
+                    📅 執筆スケジュール（カレンダー）で予定を確認 →
+                  </a>
                 </div>
               </div>
             )}

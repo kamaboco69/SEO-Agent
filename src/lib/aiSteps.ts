@@ -22,7 +22,7 @@ type StepContext = {
 };
 
 // WordPress接続済みなら、既存記事・カテゴリを「全件」取得して「不足記事の特定」「実在する内部リンク」の材料にする
-async function fetchWpContext(media: StepContext["media"]) {
+export async function fetchWpContext(media: StepContext["media"]) {
   if (!media.wpUrl || !media.wpSecret) return null;
   try {
     const perPage = 100; // プラグイン側の上限

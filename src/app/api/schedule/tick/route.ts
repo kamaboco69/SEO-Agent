@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Media } from "@prisma/client";
+import type { Media, ScheduledArticle } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { workflowSteps } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
 import { getAiCompanyEntitlement, reportAiCompanyUsage } from "@/lib/auth";
 import { advanceWorkflow, includeWorkflow, type WorkflowFull } from "@/lib/pipelineRunner";
+import { reconcilePlan, syncCalendarEvents, cancelPlannedEntries, markPlanDone } from "@/lib/schedulePlan";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // 自動スケジュール実行（Vercel Cron が毎日叩く）。
-// 1) スケジュール有効なメディアごとに「今月の残り本数」と「前回からの間隔」を見て、期日が来ていれば記事作成を開始
+// 0) 予定表の整備：今月・来月の執筆予定（日付＋AIテーマ）を目標本数に合わせ、AI秘書のGoogleカレンダーへ登録
+// 1) 予定日が来たエントリの執筆を開始
 // 2) 進行中のスケジュール記事を1ステップずつ進める（時間切れなら自分自身を再度呼んで続きから）
 //
 // 認証: Vercel Cron は Authorization: Bearer ${CRON_SECRET} を自動付与。自己チェーン/手動は x-cron-secret。
@@ -36,14 +38,6 @@ function baseUrl(req: NextRequest) {
   return req.nextUrl.origin;
 }
 
-// JST基準の「今月」情報
-function jstMonth(now = new Date()) {
-  const j = new Date(now.getTime() + JST);
-  const monthStart = new Date(Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), 1) - JST);
-  const daysInMonth = new Date(Date.UTC(j.getUTCFullYear(), j.getUTCMonth() + 1, 0)).getUTCDate();
-  return { monthStart, daysInMonth };
-}
-
 // 実行主体（スケジュールを設定したユーザー）の契約と使用量を確認
 async function ownerAllowed(email: string | null): Promise<{ ok: boolean; email: string | null; reason?: string }> {
   if (!email) return { ok: false, email: null, reason: "スケジュール設定者が不明" };
@@ -56,39 +50,23 @@ async function ownerAllowed(email: string | null): Promise<{ ok: boolean; email:
   return { ok: true, email };
 }
 
-// 期日が来ていれば新しいスケジュール記事のワークフローを作成（media_analysis まで実行）
-async function createIfDue(media: Media, force: boolean, log: string[]): Promise<WorkflowFull | null> {
-  const perMonth = Math.max(1, media.schedulePerMonth || 1);
-  const { monthStart, daysInMonth } = jstMonth();
+// 予定日を迎えたエントリの執筆を開始（media_analysis まで実行してワークフロー作成）
+async function startEntry(entry: ScheduledArticle & { media: Media }, log: string[]): Promise<boolean> {
+  const media = entry.media;
 
-  const countThisMonth = await prisma.contentWorkflow.count({
-    where: { mediaId: media.id, origin: "schedule", createdAt: { gte: monthStart } },
-  });
-  if (!force && countThisMonth >= perMonth) {
-    log.push(`${media.name}: 今月分 ${countThisMonth}/${perMonth} 本作成済み → スキップ`);
-    return null;
-  }
-
-  // 均等配分（例: 月2本→約15日間隔）。日次cronのズレで後ろへ流れないよう1割の猶予を持たせる
-  const intervalMs = Math.max(1, Math.floor(daysInMonth / perMonth)) * 86400_000;
-  if (!force && media.scheduleLastRunAt && Date.now() - media.scheduleLastRunAt.getTime() < intervalMs * 0.9) {
-    log.push(`${media.name}: 前回から間隔未達 → スキップ`);
-    return null;
-  }
-
-  // 前の自動記事がまだ進行中なら二重に始めない
+  // 前の自動記事がまだ進行中なら二重に始めない（完了後の次tickで開始される）
   const inProgress = await prisma.contentWorkflow.count({
     where: { mediaId: media.id, origin: "schedule", status: "in_progress" },
   });
   if (inProgress > 0) {
-    log.push(`${media.name}: 進行中のスケジュール記事あり → 新規作成は見送り`);
-    return null;
+    log.push(`${media.name}: 進行中のスケジュール記事あり →「${entry.theme}」は後続で実行`);
+    return false;
   }
 
   const owner = await ownerAllowed(media.scheduleOwnerEmail);
   if (!owner.ok) {
-    log.push(`${media.name}: ${owner.reason} → スキップ`);
-    return null;
+    log.push(`${media.name}: ${owner.reason} →「${entry.theme}」は保留`);
+    return false;
   }
 
   // 直近の作成テーマを渡して重複記事を防ぐ（WP下書きは既存記事一覧に出ないため）
@@ -100,29 +78,28 @@ async function createIfDue(media: Media, force: boolean, log: string[]): Promise
   });
   const recentTitles = recent
     .map((w) => w.finalArticleTitle || w.selectedArticle)
-    .filter((t): t is string => Boolean(t));
+    .filter((t): t is string => Boolean(t) && t !== entry.theme);
 
   const instruction =
     (media.scheduleInstruction?.trim() || "このメディアの検索流入を伸ばす記事を作る（自動スケジュール実行）") +
     (recentTitles.length ? `\n【重複禁止】直近で作成済みのテーマ: ${recentTitles.join(" / ")}` : "");
   const targetWordCount = media.scheduleWordCount ?? null;
 
-  const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme: null, targetWordCount, steps: [] });
+  const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme: entry.theme, targetWordCount, steps: [] });
   if (owner.email) await reportAiCompanyUsage(owner.email, first.usage);
   if (first.aiError) {
     log.push(`${media.name}: メディア分析でAIエラー（${first.aiError.slice(0, 80)}）→ 次回リトライ`);
-    return null;
+    return false;
   }
 
-  const recommended = (first.output as { recommendedArticle?: string }).recommendedArticle ?? null;
   const workflow = await prisma.contentWorkflow.create({
     data: {
       mediaId: media.id,
       origin: "schedule",
       instruction,
-      targetTheme: recommended,
+      targetTheme: entry.theme,
       targetWordCount,
-      selectedArticle: recommended,
+      selectedArticle: entry.theme,
       automationMode: "staged",
       status: "in_progress",
       currentStep: "keyword_research",
@@ -131,16 +108,19 @@ async function createIfDue(media: Media, force: boolean, log: string[]): Promise
           key: step.key,
           label: step.label,
           status: step.key === "media_analysis" ? "done" : "pending",
-          input: { instruction, mediaId: media.id, origin: "schedule" },
+          input: { instruction, mediaId: media.id, origin: "schedule", planId: entry.id },
           output: (step.key === "media_analysis" ? first.output : {}) as never,
         })),
       },
     },
-    include: includeWorkflow(),
+  });
+  await prisma.scheduledArticle.update({
+    where: { id: entry.id },
+    data: { status: "generating", workflowId: workflow.id },
   });
   await prisma.media.update({ where: { id: media.id }, data: { scheduleLastRunAt: new Date() } });
-  log.push(`${media.name}: 記事作成を開始「${recommended ?? "(テーマ自動選定)"}」`);
-  return workflow;
+  log.push(`${media.name}: 予定「${entry.theme}」の執筆を開始`);
+  return true;
 }
 
 // 続きがあるとき、自分自身を叩いて新しい実行時間枠で継続する（応答は待たずに切る）
@@ -164,26 +144,44 @@ async function runTick(req: NextRequest) {
 
   const started = Date.now();
   const chain = Number(req.nextUrl.searchParams.get("chain") ?? 0);
-  const forceMediaId = req.nextUrl.searchParams.get("force"); // 検証・手動実行用：期日判定を無視して即作成
+  const forceMediaId = req.nextUrl.searchParams.get("force"); // 検証・手動実行用：予定日を無視して直近の予定を即実行
   const log: string[] = [];
   let advancedSteps = 0;
   const finished: string[] = [];
   let hadAiError = false;
   let needMore = false;
+  const overBudget = () => Date.now() - started > SOFT_BUDGET_MS;
 
-  // 1) 期日が来たメディアの記事作成を開始
-  //（チェーン継続時も実行する。作成済み分は「進行中あり」「間隔未達」ガードで二重作成されない）
-  const createdIds: string[] = [];
-  const targets = await prisma.media.findMany({
-    where: forceMediaId ? { id: forceMediaId, scheduleEnabled: true } : { scheduleEnabled: true },
-  });
+  // 0) 予定表の整備（今月・来月ぶんを目標本数に合わせる）＋ AI秘書カレンダー同期
+  const targets = await prisma.media.findMany({ where: { scheduleEnabled: true } });
   for (const media of targets) {
-    if (Date.now() - started > SOFT_BUDGET_MS) {
-      needMore = true; // 残りメディアの判定は次の実行枠で
-      break;
-    }
-    const wf = await createIfDue(media, Boolean(forceMediaId), log);
-    if (wf) createdIds.push(wf.id);
+    if (overBudget()) { needMore = true; break; }
+    await reconcilePlan(media, log);
+    await syncCalendarEvents(media, log);
+  }
+  // 無効化されたのに残っている予定を掃除（UI以外で無効化された場合の保険）
+  const orphaned = await prisma.scheduledArticle.findMany({
+    where: { status: "planned", media: { scheduleEnabled: false } },
+    include: { media: true },
+  });
+  for (const mediaId of new Set(orphaned.map((o) => o.mediaId))) {
+    const m = orphaned.find((o) => o.mediaId === mediaId)!.media;
+    await cancelPlannedEntries(m, log);
+  }
+
+  // 1) 予定日が来たエントリの執筆を開始
+  const nowJst = new Date(Date.now());
+  const due = await prisma.scheduledArticle.findMany({
+    where: forceMediaId
+      ? { mediaId: forceMediaId, status: "planned" }
+      : { status: "planned", plannedDate: { lte: nowJst }, media: { scheduleEnabled: true } },
+    include: { media: true },
+    orderBy: { plannedDate: "asc" },
+  });
+  for (const entry of due) {
+    if (overBudget()) { needMore = true; break; }
+    await startEntry(entry, log);
+    if (forceMediaId) break; // 手動実行は1件だけ
   }
 
   // 2) 進行中のスケジュール記事を進める（古い順）
@@ -197,7 +195,7 @@ async function runTick(req: NextRequest) {
     const email = wf.media?.scheduleOwnerEmail ?? null;
     for (;;) {
       // ステップ開始前に残り時間を確認（開始後の長時間ステップでmaxDurationを超えないため）
-      if (Date.now() - started > SOFT_BUDGET_MS) {
+      if (overBudget()) {
         needMore = true;
         break;
       }
@@ -211,6 +209,7 @@ async function runTick(req: NextRequest) {
       advancedSteps += 1;
       wf = adv.workflow;
       if (adv.finished) {
+        await markPlanDone(wf.id);
         finished.push(wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id);
         log.push(`「${wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id}」: 完成（WordPress下書き保存まで完了）`);
         break;
@@ -229,7 +228,7 @@ async function runTick(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     chain,
-    created: createdIds.length,
+    started: due.length,
     advancedSteps,
     finished,
     chained,
