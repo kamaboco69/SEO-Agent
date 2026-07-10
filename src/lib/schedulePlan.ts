@@ -157,6 +157,19 @@ export async function reconcilePlan(media: Media, log: string[]): Promise<number
 
     let count = entries.length;
 
+    // 今月ぶんは「プラン外で既に自動作成された記事」も本数に算入する（作りすぎ防止）
+    if (off === 0) {
+      const linked = entries.map((e) => e.workflowId).filter((id): id is string => Boolean(id));
+      count += await prisma.contentWorkflow.count({
+        where: {
+          mediaId: media.id,
+          origin: "schedule",
+          createdAt: { gte: monthStart },
+          ...(linked.length ? { id: { notIn: linked } } : {}),
+        },
+      });
+    }
+
     // 縮小：未来の planned を日付の遅い順に削除
     if (count > target) {
       const tomorrow = jstMidnight(today.y, today.m, today.day + 1);
