@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   CalendarDays, ChevronLeft, ChevronRight, Loader2, Check, Globe,
-  ExternalLink, X, PenLine, Clock, CheckCircle2,
+  ExternalLink, X, PenLine, Clock, CheckCircle2, Plus, Pin,
 } from "lucide-react";
 
 interface MediaItem {
@@ -34,6 +34,7 @@ interface PlanEntry {
   date: string; // YYYY-MM-DD (JST)
   theme: string;
   status: string; // planned / generating / done / failed
+  source?: string; // auto / manual
   calendarSynced: boolean;
   workflow: PlanWorkflow | null;
 }
@@ -64,6 +65,12 @@ export default function CalendarPage() {
   const [forms, setForms] = useState<Record<string, SchedForm>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [msg, setMsg] = useState<Record<string, string>>({});
+  // 手動予定の追加フォーム（日付セルの＋ / ヘッダーの「予定を追加」から開く）
+  const [addDate, setAddDate] = useState<string | null>(null);
+  const [addMediaId, setAddMediaId] = useState("");
+  const [addTheme, setAddTheme] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addMsg, setAddMsg] = useState<string | null>(null);
 
   const monthKey = `${cursor.y}-${String(cursor.m).padStart(2, "0")}`;
 
@@ -138,6 +145,38 @@ export default function CalendarPage() {
       }
     } finally {
       setSaving(null);
+    }
+  }
+
+  function openAdd(date: string) {
+    setAddDate(date);
+    setAddTheme("");
+    setAddMsg(null);
+    if (!addMediaId) {
+      const first = media.find((m) => m.scheduleEnabled) ?? media[0];
+      if (first) setAddMediaId(first.id);
+    }
+  }
+
+  async function submitAdd() {
+    if (!addDate || !addMediaId || adding) return;
+    setAdding(true);
+    setAddMsg(null);
+    try {
+      const res = await fetch("/api/schedule/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaId: addMediaId, date: addDate, theme: addTheme.trim() || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setAddDate(null);
+        await loadPlan();
+      } else {
+        setAddMsg(data.error ?? "追加に失敗しました");
+      }
+    } finally {
+      setAdding(false);
     }
   }
 
@@ -250,8 +289,46 @@ export default function CalendarPage() {
         <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
           <button onClick={() => moveMonth(-1)} className="cyber-btn p-1.5 rounded-lg"><ChevronLeft size={14} /></button>
           <p className="text-sm font-bold" style={{ color: "var(--text)" }}>{cursor.y}年 {cursor.m}月</p>
-          <button onClick={() => moveMonth(1)} className="cyber-btn p-1.5 rounded-lg"><ChevronRight size={14} /></button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => {
+              const t = new Date(Date.now() + 9 * 3600 * 1000 + 86400_000).toISOString().slice(0, 10);
+              openAdd(t);
+            }} className="cyber-btn-primary flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold">
+              <Plus size={11} /> 予定を追加
+            </button>
+            <button onClick={() => moveMonth(1)} className="cyber-btn p-1.5 rounded-lg"><ChevronRight size={14} /></button>
+          </div>
         </div>
+
+        {/* 手動予定の追加フォーム（日付は自由に選択・自動プランと併用） */}
+        {addDate && (
+          <div className="px-4 py-3 space-y-2" style={{ borderBottom: "1px solid rgba(251,146,60,0.25)", background: "rgba(251,146,60,0.05)" }}>
+            <div className="flex items-center gap-2">
+              <Pin size={12} style={{ color: "#fb923c" }} />
+              <p className="text-[11px] font-bold flex-1" style={{ color: "#fb923c" }}>日付を指定して予定を追加</p>
+              <button onClick={() => setAddDate(null)} style={{ color: "var(--text-muted)" }}><X size={13} /></button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="date" value={addDate} min={today} onChange={(e) => setAddDate(e.target.value)}
+                className="cyber-input px-2 py-1.5 rounded-lg text-xs" style={{ colorScheme: "dark" }} />
+              <select value={addMediaId} onChange={(e) => setAddMediaId(e.target.value)}
+                className="cyber-input px-2 py-1.5 rounded-lg text-xs">
+                {media.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <input value={addTheme} onChange={(e) => setAddTheme(e.target.value)}
+                placeholder="テーマ（空欄ならAIが提案）" className="cyber-input flex-1 min-w-[200px] px-2 py-1.5 rounded-lg text-xs" />
+              <button onClick={submitAdd} disabled={adding || !addMediaId}
+                className="cyber-btn-primary flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">
+                {adding ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
+                {adding ? "追加中…（AIがテーマを検討）" : "追加"}
+              </button>
+            </div>
+            <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+              手動で追加した予定（📌）は月間本数の自動調整で削除されず、スケジュールOFFのメディアでも予定日に実行されます。AI秘書のGoogleカレンダーにも登録されます（時間はブロックしません）。
+            </p>
+            {addMsg && <p className="text-[9px]" style={{ color: "#f87171" }}>{addMsg}</p>}
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <div style={{ minWidth: 720 }}>
@@ -267,7 +344,7 @@ export default function CalendarPage() {
                 const dayEntries = day ? byDate.get(dateStr) ?? [] : [];
                 const isToday = dateStr === today;
                 return (
-                  <div key={idx} className="min-h-[86px] p-1"
+                  <div key={idx} className="min-h-[86px] p-1 group/cell"
                     style={{
                       borderRight: (idx + 1) % 7 !== 0 ? "1px solid rgba(56,189,248,0.06)" : undefined,
                       borderBottom: "1px solid rgba(56,189,248,0.06)",
@@ -278,6 +355,13 @@ export default function CalendarPage() {
                         style={{ color: isToday ? "#34d399" : "var(--text-muted)" }}>
                         {day}
                         {isToday && <span className="text-[8px] px-1 rounded" style={{ background: "rgba(52,211,153,0.15)", color: "#34d399" }}>今日</span>}
+                        {dateStr >= today && (
+                          <button onClick={() => openAdd(dateStr)}
+                            className="ml-auto opacity-0 group-hover/cell:opacity-100 transition-opacity rounded"
+                            style={{ color: "#fb923c" }} title="この日に予定を追加">
+                            <Plus size={11} />
+                          </button>
+                        )}
                       </p>
                     )}
                     <div className="space-y-1">
@@ -288,7 +372,7 @@ export default function CalendarPage() {
                         const link = e.workflow?.wpEditLink ?? e.workflow?.gdocUrl ?? null;
                         return (
                           <div key={e.id} className="group rounded-md px-1.5 py-1 text-[9px] leading-tight"
-                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定"}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
+                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定"}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
                             style={{
                               background: done ? `${color}22` : "rgba(4,10,30,0.5)",
                               border: `1px solid ${color}${done ? "88" : "44"}`,
@@ -298,6 +382,7 @@ export default function CalendarPage() {
                                 : generating ? <PenLine size={9} style={{ color: "#facc15" }} className="shrink-0" />
                                 : <Clock size={9} style={{ color }} className="shrink-0" />}
                               <span className="font-bold truncate" style={{ color }}>{e.mediaName}</span>
+                              {e.source === "manual" && <Pin size={8} style={{ color: "#fb923c" }} className="shrink-0" />}
                               {e.calendarSynced && <span title="AI秘書カレンダー登録済み" className="shrink-0">📅</span>}
                               {e.status === "planned" && (
                                 <button onClick={() => removeEntry(e)} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -331,6 +416,7 @@ export default function CalendarPage() {
           <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><Clock size={9} /> 予定</span>
           <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><PenLine size={9} style={{ color: "#facc15" }} /> 生成中</span>
           <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><CheckCircle2 size={9} style={{ color: "#34d399" }} /> 完了（クリックで記事へ）</span>
+          <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><Pin size={9} style={{ color: "#fb923c" }} /> 手動で日付指定（自動調整で消えない）</span>
           <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>📅 = AI秘書（AICompany）のGoogleカレンダー登録済み</span>
           {scheduledMedia.length === 0 && (
             <span className="text-[9px]" style={{ color: "#fb923c" }}>スケジュール有効なメディアがありません。上の設定でONにしてください。</span>

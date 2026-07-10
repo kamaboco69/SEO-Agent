@@ -159,22 +159,35 @@ async function runTick(req: NextRequest) {
     await reconcilePlan(media, log);
     await syncCalendarEvents(media, log);
   }
-  // 無効化されたのに残っている予定を掃除（UI以外で無効化された場合の保険）
+  // 無効化されたのに残っている自動予定を掃除（UI以外で無効化された場合の保険）
   const orphaned = await prisma.scheduledArticle.findMany({
-    where: { status: "planned", media: { scheduleEnabled: false } },
+    where: { status: "planned", source: "auto", media: { scheduleEnabled: false } },
     include: { media: true },
   });
   for (const mediaId of new Set(orphaned.map((o) => o.mediaId))) {
     const m = orphaned.find((o) => o.mediaId === mediaId)!.media;
     await cancelPlannedEntries(m, log);
   }
+  // スケジュールOFFのメディアに残る手動予定のカレンダー未同期を再試行
+  const unsynced = await prisma.scheduledArticle.findMany({
+    where: { status: "planned", source: "manual", calendarEventId: null, media: { scheduleEnabled: false } },
+    include: { media: true },
+  });
+  for (const mediaId of new Set(unsynced.map((o) => o.mediaId))) {
+    const m = unsynced.find((o) => o.mediaId === mediaId)!.media;
+    await syncCalendarEvents(m, log);
+  }
 
-  // 1) 予定日が来たエントリの執筆を開始
-  const nowJst = new Date(Date.now());
+  // 1) 予定日が来たエントリの執筆を開始（手動指定の予定はスケジュールOFFでも実行する）
+  const now = new Date();
   const due = await prisma.scheduledArticle.findMany({
     where: forceMediaId
       ? { mediaId: forceMediaId, status: "planned" }
-      : { status: "planned", plannedDate: { lte: nowJst }, media: { scheduleEnabled: true } },
+      : {
+          status: "planned",
+          plannedDate: { lte: now },
+          OR: [{ source: "manual" }, { media: { scheduleEnabled: true } }],
+        },
     include: { media: true },
     orderBy: { plannedDate: "asc" },
   });

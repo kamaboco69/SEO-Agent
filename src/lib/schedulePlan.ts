@@ -54,7 +54,7 @@ async function aicCalendar(body: Record<string, unknown>): Promise<AicCalendarRe
 
 // ── テーマのAI提案 ───────────────────────────────────────────
 
-async function proposeThemes(media: Media, count: number, avoid: string[]): Promise<{ themes: string[]; error?: string }> {
+export async function proposeThemes(media: Media, count: number, avoid: string[]): Promise<{ themes: string[]; error?: string }> {
   if (!process.env.ANTHROPIC_API_KEY) return { themes: [], error: "ANTHROPIC_API_KEY未設定" };
   const wp = await fetchWpContext(media);
   const existing = (wp?.existingArticles ?? []).map((a) => a.title).slice(0, 150);
@@ -125,11 +125,29 @@ async function deleteEntryWithCalendar(entry: ScheduledArticle, ownerEmail: stri
   await prisma.scheduledArticle.delete({ where: { id: entry.id } });
 }
 
-// スケジュール無効化時：未実行の予定を全て削除（カレンダーからも消す）
+// スケジュール無効化時：未実行の「自動」予定を削除（カレンダーからも消す）。
+// 手動で日付指定した予定はユーザーの意思なので残し、予定日に実行される。
 export async function cancelPlannedEntries(media: Pick<Media, "id" | "scheduleOwnerEmail">, log: string[]) {
-  const entries = await prisma.scheduledArticle.findMany({ where: { mediaId: media.id, status: "planned" } });
+  const entries = await prisma.scheduledArticle.findMany({
+    where: { mediaId: media.id, status: "planned", source: "auto" },
+  });
   for (const e of entries) await deleteEntryWithCalendar(e, media.scheduleOwnerEmail, log);
-  if (entries.length) log.push(`未実行の予定 ${entries.length} 件を取り消しました`);
+  if (entries.length) log.push(`未実行の自動予定 ${entries.length} 件を取り消しました（手動指定の予定は残ります）`);
+}
+
+// テーマ重複回避リスト（既存プラン＋直近の作成記事）
+export async function buildAvoidList(mediaId: string): Promise<string[]> {
+  const existingPlans = await prisma.scheduledArticle.findMany({
+    where: { mediaId }, orderBy: { plannedDate: "desc" }, take: 30, select: { theme: true },
+  });
+  const recentWfs = await prisma.contentWorkflow.findMany({
+    where: { mediaId }, orderBy: { createdAt: "desc" }, take: 10,
+    select: { finalArticleTitle: true, selectedArticle: true },
+  });
+  return [
+    ...existingPlans.map((p) => p.theme),
+    ...recentWfs.map((w) => w.finalArticleTitle || w.selectedArticle).filter((t): t is string => Boolean(t)),
+  ];
 }
 
 // 今月・来月の予定を schedulePerMonth に合わせて増減する。
@@ -170,11 +188,11 @@ export async function reconcilePlan(media: Media, log: string[]): Promise<number
       });
     }
 
-    // 縮小：未来の planned を日付の遅い順に削除
+    // 縮小：未来の「自動」planned を日付の遅い順に削除（手動指定の予定は削除しない）
     if (count > target) {
       const tomorrow = jstMidnight(today.y, today.m, today.day + 1);
       const removable = entries
-        .filter((e) => e.status === "planned" && (off > 0 || e.plannedDate >= tomorrow))
+        .filter((e) => e.status === "planned" && e.source === "auto" && (off > 0 || e.plannedDate >= tomorrow))
         .sort((a, b) => b.plannedDate.getTime() - a.plannedDate.getTime())
         .slice(0, count - target);
       for (const e of removable) await deleteEntryWithCalendar(e, media.scheduleOwnerEmail, log);
@@ -197,18 +215,7 @@ export async function reconcilePlan(media: Media, log: string[]): Promise<number
   if (totalNeed === 0) return 0;
 
   // テーマをまとめて提案（既存プラン＋直近作成分と重複しないように）
-  const existingPlans = await prisma.scheduledArticle.findMany({
-    where: { mediaId: media.id }, orderBy: { plannedDate: "desc" }, take: 30, select: { theme: true },
-  });
-  const recentWfs = await prisma.contentWorkflow.findMany({
-    where: { mediaId: media.id }, orderBy: { createdAt: "desc" }, take: 10,
-    select: { finalArticleTitle: true, selectedArticle: true },
-  });
-  const avoid = [
-    ...existingPlans.map((p) => p.theme),
-    ...recentWfs.map((w) => w.finalArticleTitle || w.selectedArticle).filter((t): t is string => Boolean(t)),
-  ];
-
+  const avoid = await buildAvoidList(media.id);
   const { themes, error } = await proposeThemes(media, totalNeed, avoid);
   if (error || themes.length < totalNeed) {
     log.push(`${media.name}: テーマ提案に失敗（${error ?? "提案数不足"}）→ 次回リトライ`);

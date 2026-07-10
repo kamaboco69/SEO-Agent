@@ -169,6 +169,7 @@ model ScheduledArticle {
   plannedDate     DateTime // JSTの日付（そのJST日の00:00をUTCで保持）
   theme           String
   status          String   @default("planned") // planned / generating / done / failed
+  source          String   @default("auto")    // auto=自動計画 / manual=ユーザーが日付指定（自動調整で削除されない）
   workflowId      String?
   calendarEventId String?  // AI秘書（AICompany）のGoogleカレンダーのイベントID
   calendarUrl     String?
