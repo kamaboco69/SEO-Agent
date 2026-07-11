@@ -224,7 +224,7 @@ export default function MediaWorkflowPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <div className="shrink-0 px-6 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
         <div>
           <p className="text-[10px] font-bold tracking-widest uppercase" style={{ color: "rgba(34,211,238,0.75)" }}>MEDIA CONTENT OPS</p>
@@ -236,7 +236,7 @@ export default function MediaWorkflowPage() {
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 grid grid-cols-[330px_360px_1fr] gap-4 p-4 overflow-hidden">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[330px_360px_1fr] gap-4 p-4 overflow-y-auto lg:overflow-hidden">
         <div className="flex flex-col gap-4 min-h-0">
           <form onSubmit={createMedia} className="glass-static rounded-xl p-4 space-y-3 shrink-0">
             <div className="flex items-center gap-2">

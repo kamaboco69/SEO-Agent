@@ -28,7 +28,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <div className="shrink-0 px-6 py-4" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
         <p className="text-[10px] font-bold tracking-widest uppercase" style={{ color: "rgba(167,139,250,0.7)" }}>PROJECT MANAGER</p>
         <h1 className="text-lg font-bold" style={{ color: "var(--purple)", textShadow: "0 0 12px rgba(167,139,250,0.5)" }}>プロジェクト</h1>

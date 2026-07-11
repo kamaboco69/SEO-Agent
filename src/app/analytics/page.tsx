@@ -114,7 +114,7 @@ export default function AnalyticsPage() {
   const num = (n: number) => n.toLocaleString();
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="shrink-0 px-6 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(250,204,21,0.12)" }}>
         <div className="flex items-center gap-3">

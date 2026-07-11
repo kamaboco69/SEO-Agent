@@ -342,7 +342,7 @@ export default function KeywordsPage() {
     : [];
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="shrink-0 px-5 py-3.5 flex items-center gap-4" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
         <div className="shrink-0">

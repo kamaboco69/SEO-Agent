@@ -12,7 +12,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ja" className="h-full">
       <body className="h-full flex overflow-hidden">
         <Sidebar />
-        <main className="main-scroll flex-1 min-w-0">
+        {/* モバイルは下部固定ナビ(約50px)分の余白を確保。md以上はサイドバーのため不要 */}
+        <main className="main-scroll flex-1 min-w-0 pb-[50px] md:pb-0">
           {children}
         </main>
       </body>

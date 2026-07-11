@@ -432,16 +432,16 @@ export default function PipelinePage() {
   }, [workflow]);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 px-6 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg, rgba(52,211,153,0.3), rgba(34,211,238,0.3))", border: "1px solid rgba(52,211,153,0.4)" }}>
+      <div className="shrink-0 px-4 md:px-6 py-3 md:py-4 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "linear-gradient(135deg, rgba(52,211,153,0.3), rgba(34,211,238,0.3))", border: "1px solid rgba(52,211,153,0.4)" }}>
             <Sparkles size={17} style={{ color: "#34d399" }} />
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-bold tracking-widest uppercase" style={{ color: "rgba(52,211,153,0.75)" }}>AI WRITING PIPELINE</p>
-            <h1 className="text-lg font-bold grad-text">メディア分析 → 記事執筆まで一気通貫</h1>
+            <h1 className="text-base md:text-lg font-bold grad-text truncate">メディア分析 → 記事執筆まで一気通貫</h1>
           </div>
         </div>
         {workflow && (
@@ -454,7 +454,8 @@ export default function PipelinePage() {
         )}
       </div>
 
-      <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr] gap-4 p-4 overflow-hidden">
+      {/* モバイルは1カラム縦積み＋ページスクロール、md以上は左固定320px＋右可変で内部スクロール */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[320px_1fr] gap-4 p-4 overflow-y-auto md:overflow-hidden">
         {/* Left: media + controls */}
         <div className="flex flex-col gap-4 min-h-0">
           {/* 執筆モード切替 */}
@@ -685,7 +686,8 @@ export default function PipelinePage() {
             <div className="px-4 py-2.5 shrink-0" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
               <p className="text-xs font-bold" style={{ color: "var(--text)" }}>実行履歴</p>
             </div>
-            <div className="overflow-y-auto flex-1">
+            {/* モバイル(縦積み)では高さが親から決まらないため上限を設ける */}
+            <div className="overflow-y-auto flex-1 max-h-72 md:max-h-none">
               {history.length === 0 ? (
                 <p className="text-[10px] p-4" style={{ color: "var(--text-muted)" }}>まだ実行履歴がありません</p>
               ) : history.map((h) => (

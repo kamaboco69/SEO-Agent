@@ -55,7 +55,7 @@ export default function AuditPage() {
   const categories = data ? [...new Set(data.items.map((i) => i.category))] : [];
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <div className="shrink-0 px-6 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid rgba(56,189,248,0.1)" }}>
         <div>
           <p className="text-[10px] font-bold tracking-widest uppercase" style={{ color: "rgba(244,114,182,0.7)" }}>SITE AUDITOR</p>

@@ -62,8 +62,8 @@ function LoginContent() {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center px-6" style={{ background: "var(--bg)" }}>
-      <div className="w-full max-w-[980px] grid grid-cols-[1fr_420px] gap-8 items-center">
-        <div className="pr-8">
+      <div className="w-full max-w-[980px] grid grid-cols-1 md:grid-cols-[1fr_420px] gap-8 items-center">
+        <div className="pr-0 md:pr-8">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{
               background: "linear-gradient(135deg, rgba(56,189,248,0.3), rgba(167,139,250,0.3))",
