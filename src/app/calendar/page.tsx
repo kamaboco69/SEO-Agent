@@ -35,6 +35,7 @@ interface PlanEntry {
   theme: string;
   status: string; // planned / generating / done / failed
   source?: string; // auto / manual
+  wordCount?: number | null; // 予定ごとの目標文字数（null=メディア設定に従う）
   calendarSynced: boolean;
   workflow: PlanWorkflow | null;
 }
@@ -69,12 +70,14 @@ export default function CalendarPage() {
   const [addDate, setAddDate] = useState<string | null>(null);
   const [addMediaId, setAddMediaId] = useState("");
   const [addTheme, setAddTheme] = useState("");
+  const [addWordCount, setAddWordCount] = useState("");
   const [adding, setAdding] = useState(false);
   const [addMsg, setAddMsg] = useState<string | null>(null);
   // 予定の編集（予定チップのクリックで開く。実行前=plannedのみ）
   const [editEntry, setEditEntry] = useState<PlanEntry | null>(null);
   const [editDate, setEditDate] = useState("");
   const [editTheme, setEditTheme] = useState("");
+  const [editWordCount, setEditWordCount] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
 
@@ -157,7 +160,9 @@ export default function CalendarPage() {
   function openAdd(date: string) {
     setAddDate(date);
     setAddTheme("");
+    setAddWordCount("");
     setAddMsg(null);
+    setEditEntry(null); // 編集フォームと同時には開かない
     if (!addMediaId) {
       const first = media.find((m) => m.scheduleEnabled) ?? media[0];
       if (first) setAddMediaId(first.id);
@@ -172,7 +177,7 @@ export default function CalendarPage() {
       const res = await fetch("/api/schedule/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaId: addMediaId, date: addDate, theme: addTheme.trim() || null }),
+        body: JSON.stringify({ mediaId: addMediaId, date: addDate, theme: addTheme.trim() || null, wordCount: addWordCount ? Number(addWordCount) : null }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -200,6 +205,7 @@ export default function CalendarPage() {
     setEditEntry(entry);
     setEditDate(entry.date);
     setEditTheme(entry.theme);
+    setEditWordCount(entry.wordCount ? String(entry.wordCount) : "");
     setEditMsg(null);
     setAddDate(null); // 追加フォームと同時には開かない
   }
@@ -213,7 +219,7 @@ export default function CalendarPage() {
       const res = await fetch("/api/schedule/plan", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editEntry.id, date: editDate, theme: editTheme.trim() }),
+        body: JSON.stringify({ id: editEntry.id, date: editDate, theme: editTheme.trim(), wordCount: editWordCount ? Number(editWordCount) : null }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -357,6 +363,11 @@ export default function CalendarPage() {
               </select>
               <input value={addTheme} onChange={(e) => setAddTheme(e.target.value)}
                 placeholder="テーマ（空欄ならAIが提案）" className="cyber-input flex-1 min-w-[200px] px-2 py-1.5 rounded-lg text-xs" />
+              <div className="flex items-center gap-1">
+                <input value={addWordCount} onChange={(e) => setAddWordCount(e.target.value.replace(/[^0-9]/g, ""))}
+                  inputMode="numeric" placeholder="文字数（任意）" className="cyber-input w-28 px-2 py-1.5 rounded-lg text-xs" />
+                <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>字</span>
+              </div>
               <button onClick={submitAdd} disabled={adding || !addMediaId}
                 className="cyber-btn-primary flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">
                 {adding ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
@@ -386,6 +397,16 @@ export default function CalendarPage() {
                 className="cyber-input px-2 py-1.5 rounded-lg text-xs" style={{ colorScheme: "dark" }} />
               <input value={editTheme} onChange={(e) => setEditTheme(e.target.value)}
                 placeholder="テーマ" className="cyber-input flex-1 min-w-[220px] px-2 py-1.5 rounded-lg text-xs" />
+              <div className="flex items-center gap-1">
+                <input value={editWordCount} onChange={(e) => setEditWordCount(e.target.value.replace(/[^0-9]/g, ""))}
+                  inputMode="numeric"
+                  placeholder={(() => {
+                    const m = media.find((x) => x.id === editEntry.mediaId);
+                    return m?.scheduleWordCount ? `空欄=${m.scheduleWordCount}字(メディア設定)` : "文字数（空欄=AI判断）";
+                  })()}
+                  className="cyber-input w-44 px-2 py-1.5 rounded-lg text-xs" />
+                <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>字</span>
+              </div>
               <button onClick={submitEdit} disabled={editSaving || !editDate || !editTheme.trim()}
                 className="cyber-btn-primary flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">
                 {editSaving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
@@ -448,7 +469,7 @@ export default function CalendarPage() {
                           <div key={e.id}
                             onClick={e.status === "planned" ? () => openEdit(e) : undefined}
                             className={`group rounded-md px-1.5 py-1 text-[9px] leading-tight ${e.status === "planned" ? "cursor-pointer transition-colors hover:brightness-125" : ""}`}
-                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定（クリックで編集）"}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
+                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定（クリックで編集）"}${e.wordCount ? `\n目標文字数: ${e.wordCount.toLocaleString()}字` : ""}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
                             style={{
                               background: done ? `${color}22` : "rgba(4,10,30,0.5)",
                               border: `1px solid ${color}${done ? "88" : editEntry?.id === e.id ? "aa" : "44"}`,

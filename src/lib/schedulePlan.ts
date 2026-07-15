@@ -245,6 +245,7 @@ export async function syncCalendarEvents(media: Media, log: string[]): Promise<v
     orderBy: { plannedDate: "asc" },
   });
   for (const e of entries) {
+    const wc = e.wordCount ?? media.scheduleWordCount;
     const r = await aicCalendar({
       action: "create",
       email: media.scheduleOwnerEmail,
@@ -254,7 +255,7 @@ export async function syncCalendarEvents(media: Media, log: string[]): Promise<v
         "SEO Agent の自動スケジュール執筆予定です。",
         `メディア: ${media.name}（${media.domain}）`,
         `テーマ: ${e.theme}`,
-        media.scheduleWordCount ? `目標文字数: ${media.scheduleWordCount.toLocaleString()}字` : "目標文字数: AIが自動判断",
+        wc ? `目標文字数: ${wc.toLocaleString()}字` : "目標文字数: AIが自動判断",
         "この日に自動で執筆され、完成後はWordPressに下書き保存されます。",
         "※AIが自動実行するメモです。時間はブロックしません（「予定なし」扱い）。ミーティング等の日程調整には影響しません。",
       ].join("\n"),
@@ -276,14 +277,14 @@ export async function syncCalendarEvents(media: Media, log: string[]): Promise<v
 // カレンダーは旧イベントを削除→未同期に戻し、再同期で新しい日付・テーマの終日予定を作り直す。
 export async function updatePlanEntry(
   id: string,
-  changes: { date?: string | null; theme?: string | null }
+  changes: { date?: string | null; theme?: string | null; wordCount?: number | null; hasWordCount?: boolean }
 ): Promise<{ entry?: ScheduledArticle; error?: string; log: string[] }> {
   const log: string[] = [];
   const entry = await prisma.scheduledArticle.findUnique({ where: { id }, include: { media: true } });
   if (!entry) return { error: "予定が見つかりません", log };
   if (entry.status !== "planned") return { error: "実行済み・進行中の予定は編集できません", log };
 
-  const data: { plannedDate?: Date; theme?: string; calendarEventId?: null; calendarUrl?: null } = {};
+  const data: { plannedDate?: Date; theme?: string; wordCount?: number | null; calendarEventId?: null; calendarUrl?: null } = {};
   if (changes.date) {
     const m = changes.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return { error: "日付（YYYY-MM-DD）の形式が不正です", log };
@@ -293,7 +294,17 @@ export async function updatePlanEntry(
   }
   const theme = changes.theme?.trim();
   if (theme) data.theme = theme;
-  if (!data.plannedDate && !data.theme) return { error: "変更内容がありません", log };
+  // 文字数: 数値=この予定だけの指定 / null=クリア（メディア設定・AI判断に戻す）
+  if (changes.hasWordCount) {
+    if (changes.wordCount != null) {
+      const wc = Math.round(Number(changes.wordCount));
+      if (!Number.isFinite(wc) || wc <= 0 || wc > 20000) return { error: "文字数は1〜20000で指定してください", log };
+      data.wordCount = wc;
+    } else {
+      data.wordCount = null;
+    }
+  }
+  if (!data.plannedDate && !data.theme && !changes.hasWordCount) return { error: "変更内容がありません", log };
 
   if (entry.calendarEventId && entry.media.scheduleOwnerEmail) {
     const r = await aicCalendar({ action: "delete", email: entry.media.scheduleOwnerEmail, eventId: entry.calendarEventId });

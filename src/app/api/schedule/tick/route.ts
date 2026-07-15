@@ -83,7 +83,8 @@ async function startEntry(entry: ScheduledArticle & { media: Media }, log: strin
   const instruction =
     (media.scheduleInstruction?.trim() || "このメディアの検索流入を伸ばす記事を作る（自動スケジュール実行）") +
     (recentTitles.length ? `\n【重複禁止】直近で作成済みのテーマ: ${recentTitles.join(" / ")}` : "");
-  const targetWordCount = media.scheduleWordCount ?? null;
+  // 予定ごとの文字数指定を優先し、なければメディアのスケジュール設定に従う
+  const targetWordCount = entry.wordCount ?? media.scheduleWordCount ?? null;
 
   const first = await runStepWithAI("media_analysis", { media, instruction, targetTheme: entry.theme, targetWordCount, steps: [] });
   if (owner.email) await reportAiCompanyUsage(owner.email, first.usage);

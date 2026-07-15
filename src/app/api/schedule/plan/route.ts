@@ -46,6 +46,7 @@ export async function GET(req: NextRequest) {
       theme: e.theme,
       status: e.status,
       source: e.source,
+      wordCount: e.wordCount,
       calendarSynced: Boolean(e.calendarEventId),
       workflow: e.workflowId ? wfMap.get(e.workflowId) ?? null : null,
     })),
@@ -93,8 +94,11 @@ export async function POST(req: NextRequest) {
     await prisma.media.update({ where: { id: mediaId }, data: { scheduleOwnerEmail: owner } });
   }
 
+  const rawWc = Number(body.wordCount);
+  const wordCount = Number.isFinite(rawWc) && rawWc > 0 ? Math.min(20000, Math.round(rawWc)) : null;
+
   const entry = await prisma.scheduledArticle.create({
-    data: { mediaId, plannedDate, theme, source: "manual" },
+    data: { mediaId, plannedDate, theme, wordCount, source: "manual" },
   });
 
   // AI秘書のGoogleカレンダーへ即登録（transparent＝時間はブロックしない）
@@ -113,9 +117,13 @@ export async function PATCH(req: NextRequest) {
   const id = String(body.id ?? "").trim();
   if (!id) return NextResponse.json({ error: "idが必要です" }, { status: 400 });
 
+  const rawWc = Number(body.wordCount);
   const r = await updatePlanEntry(id, {
     date: body.date ? String(body.date) : null,
     theme: body.theme ? String(body.theme) : null,
+    // wordCount キーが送られてきたときだけ変更（数値=指定 / null・空=クリア）
+    hasWordCount: "wordCount" in body,
+    wordCount: Number.isFinite(rawWc) && rawWc > 0 ? rawWc : null,
   });
   if (r.error) return NextResponse.json({ error: r.error }, { status: 400 });
   return NextResponse.json({ ok: true, entry: r.entry, log: r.log });
