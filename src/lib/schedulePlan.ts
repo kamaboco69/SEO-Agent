@@ -272,6 +272,42 @@ export async function syncCalendarEvents(media: Media, log: string[]): Promise<v
   if (entries.length) log.push(`AI秘書カレンダーに${entries.length}件登録しました`);
 }
 
+// 予定の編集（日付・テーマ）。実行前（planned）の予定のみ。
+// カレンダーは旧イベントを削除→未同期に戻し、再同期で新しい日付・テーマの終日予定を作り直す。
+export async function updatePlanEntry(
+  id: string,
+  changes: { date?: string | null; theme?: string | null }
+): Promise<{ entry?: ScheduledArticle; error?: string; log: string[] }> {
+  const log: string[] = [];
+  const entry = await prisma.scheduledArticle.findUnique({ where: { id }, include: { media: true } });
+  if (!entry) return { error: "予定が見つかりません", log };
+  if (entry.status !== "planned") return { error: "実行済み・進行中の予定は編集できません", log };
+
+  const data: { plannedDate?: Date; theme?: string; calendarEventId?: null; calendarUrl?: null } = {};
+  if (changes.date) {
+    const m = changes.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return { error: "日付（YYYY-MM-DD）の形式が不正です", log };
+    const todayJst = new Date(Date.now() + JST).toISOString().slice(0, 10);
+    if (changes.date < todayJst) return { error: "過去の日付には変更できません", log };
+    data.plannedDate = jstMidnight(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+  const theme = changes.theme?.trim();
+  if (theme) data.theme = theme;
+  if (!data.plannedDate && !data.theme) return { error: "変更内容がありません", log };
+
+  if (entry.calendarEventId && entry.media.scheduleOwnerEmail) {
+    const r = await aicCalendar({ action: "delete", email: entry.media.scheduleOwnerEmail, eventId: entry.calendarEventId });
+    if (r.error) log.push(`旧カレンダー予定の削除に失敗: ${r.error}`);
+    data.calendarEventId = null;
+    data.calendarUrl = null;
+  }
+
+  await prisma.scheduledArticle.update({ where: { id }, data });
+  await syncCalendarEvents(entry.media, log);
+  const fresh = await prisma.scheduledArticle.findUnique({ where: { id } });
+  return { entry: fresh ?? undefined, log };
+}
+
 // 執筆完了をプランに反映
 export async function markPlanDone(workflowId: string) {
   await prisma.scheduledArticle.updateMany({ where: { workflowId }, data: { status: "done" } });

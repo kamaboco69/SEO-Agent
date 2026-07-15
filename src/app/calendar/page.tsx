@@ -71,6 +71,12 @@ export default function CalendarPage() {
   const [addTheme, setAddTheme] = useState("");
   const [adding, setAdding] = useState(false);
   const [addMsg, setAddMsg] = useState<string | null>(null);
+  // 予定の編集（予定チップのクリックで開く。実行前=plannedのみ）
+  const [editEntry, setEditEntry] = useState<PlanEntry | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editTheme, setEditTheme] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
 
   const monthKey = `${cursor.y}-${String(cursor.m).padStart(2, "0")}`;
 
@@ -183,8 +189,42 @@ export default function CalendarPage() {
   async function removeEntry(entry: PlanEntry) {
     if (!confirm(`予定「${entry.theme}」を取り消しますか？（AI秘書のカレンダーからも削除されます）`)) return;
     const res = await fetch(`/api/schedule/plan?id=${entry.id}`, { method: "DELETE" });
-    if (res.ok) loadPlan();
-    else alert("削除に失敗しました");
+    if (res.ok) {
+      if (editEntry?.id === entry.id) setEditEntry(null);
+      loadPlan();
+    } else alert("削除に失敗しました");
+  }
+
+  function openEdit(entry: PlanEntry) {
+    if (entry.status !== "planned") return;
+    setEditEntry(entry);
+    setEditDate(entry.date);
+    setEditTheme(entry.theme);
+    setEditMsg(null);
+    setAddDate(null); // 追加フォームと同時には開かない
+  }
+
+  async function submitEdit() {
+    if (!editEntry || editSaving) return;
+    if (!editDate || !editTheme.trim()) { setEditMsg("日付とテーマを入力してください"); return; }
+    setEditSaving(true);
+    setEditMsg(null);
+    try {
+      const res = await fetch("/api/schedule/plan", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editEntry.id, date: editDate, theme: editTheme.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setEditEntry(null);
+        await loadPlan();
+      } else {
+        setEditMsg(data.error ?? "保存に失敗しました");
+      }
+    } finally {
+      setEditSaving(false);
+    }
   }
 
   function moveMonth(delta: number) {
@@ -330,6 +370,40 @@ export default function CalendarPage() {
           </div>
         )}
 
+        {/* 予定の編集（チップのクリックで開く。日付・テーマの変更／取り消し） */}
+        {editEntry && (
+          <div className="px-4 py-3 space-y-2" style={{ borderBottom: "1px solid rgba(56,189,248,0.25)", background: "rgba(56,189,248,0.05)" }}>
+            <div className="flex items-center gap-2">
+              <PenLine size={12} style={{ color: "#38bdf8" }} />
+              <p className="text-[11px] font-bold flex-1" style={{ color: "#38bdf8" }}>
+                予定を編集 — {editEntry.mediaName}
+                {editEntry.source === "manual" && <span className="ml-1.5 text-[9px]" style={{ color: "#fb923c" }}>📌手動</span>}
+              </p>
+              <button onClick={() => setEditEntry(null)} style={{ color: "var(--text-muted)" }}><X size={13} /></button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="date" value={editDate} min={today} onChange={(e) => setEditDate(e.target.value)}
+                className="cyber-input px-2 py-1.5 rounded-lg text-xs" style={{ colorScheme: "dark" }} />
+              <input value={editTheme} onChange={(e) => setEditTheme(e.target.value)}
+                placeholder="テーマ" className="cyber-input flex-1 min-w-[220px] px-2 py-1.5 rounded-lg text-xs" />
+              <button onClick={submitEdit} disabled={editSaving || !editDate || !editTheme.trim()}
+                className="cyber-btn-primary flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40">
+                {editSaving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                {editSaving ? "保存中…" : "保存"}
+              </button>
+              <button onClick={() => removeEntry(editEntry)} disabled={editSaving}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold disabled:opacity-40"
+                style={{ background: "transparent", border: "1px solid rgba(248,113,113,0.35)", color: "#f87171" }}>
+                <X size={11} /> この予定を取り消す
+              </button>
+            </div>
+            <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+              変更を保存すると、AI秘書（AICompany）のGoogleカレンダーの予定も新しい日付・テーマで作り直されます。
+            </p>
+            {editMsg && <p className="text-[9px]" style={{ color: "#f87171" }}>{editMsg}</p>}
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <div style={{ minWidth: 720 }}>
             <div className="grid grid-cols-7" style={{ borderBottom: "1px solid rgba(56,189,248,0.08)" }}>
@@ -371,11 +445,14 @@ export default function CalendarPage() {
                         const generating = e.status === "generating";
                         const link = e.workflow?.wpEditLink ?? e.workflow?.gdocUrl ?? null;
                         return (
-                          <div key={e.id} className="group rounded-md px-1.5 py-1 text-[9px] leading-tight"
-                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定"}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
+                          <div key={e.id}
+                            onClick={e.status === "planned" ? () => openEdit(e) : undefined}
+                            className={`group rounded-md px-1.5 py-1 text-[9px] leading-tight ${e.status === "planned" ? "cursor-pointer transition-colors hover:brightness-125" : ""}`}
+                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定（クリックで編集）"}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
                             style={{
                               background: done ? `${color}22` : "rgba(4,10,30,0.5)",
-                              border: `1px solid ${color}${done ? "88" : "44"}`,
+                              border: `1px solid ${color}${done ? "88" : editEntry?.id === e.id ? "aa" : "44"}`,
+                              outline: editEntry?.id === e.id ? `1px solid ${color}` : undefined,
                             }}>
                             <div className="flex items-center gap-1">
                               {done ? <CheckCircle2 size={9} style={{ color }} className="shrink-0" />
@@ -385,7 +462,7 @@ export default function CalendarPage() {
                               {e.source === "manual" && <Pin size={8} style={{ color: "#fb923c" }} className="shrink-0" />}
                               {e.calendarSynced && <span title="AI秘書カレンダー登録済み" className="shrink-0">📅</span>}
                               {e.status === "planned" && (
-                                <button onClick={() => removeEntry(e)} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                <button onClick={(ev) => { ev.stopPropagation(); removeEntry(e); }} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                                   style={{ color: "var(--text-muted)" }} title="この予定を取り消す">
                                   <X size={9} />
                                 </button>
@@ -413,7 +490,7 @@ export default function CalendarPage() {
 
         <div className="flex items-center gap-4 px-4 py-2.5 flex-wrap" style={{ borderTop: "1px solid rgba(56,189,248,0.08)" }}>
           {loading && <Loader2 size={11} className="animate-spin" style={{ color: "var(--text-muted)" }} />}
-          <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><Clock size={9} /> 予定</span>
+          <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><Clock size={9} /> 予定（クリックで日付・テーマを編集）</span>
           <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><PenLine size={9} style={{ color: "#facc15" }} /> 生成中</span>
           <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><CheckCircle2 size={9} style={{ color: "#34d399" }} /> 完了（クリックで記事へ）</span>
           <span className="flex items-center gap-1 text-[9px]" style={{ color: "var(--text-muted)" }}><Pin size={9} style={{ color: "#fb923c" }} /> 手動で日付指定（自動調整で消えない）</span>

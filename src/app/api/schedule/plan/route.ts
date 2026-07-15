@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { buildAvoidList, jstMidnight, proposeThemes, syncCalendarEvents } from "@/lib/schedulePlan";
+import { buildAvoidList, jstMidnight, proposeThemes, syncCalendarEvents, updatePlanEntry } from "@/lib/schedulePlan";
 import { getCurrentUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -102,6 +102,23 @@ export async function POST(req: NextRequest) {
   const fresh = await prisma.scheduledArticle.findUnique({ where: { id: entry.id } });
 
   return NextResponse.json({ ok: true, entry: fresh, log }, { status: 201 });
+}
+
+// 予定の編集（日付・テーマ）。カレンダーの予定も作り直して追従させる。
+export async function PATCH(req: NextRequest) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const id = String(body.id ?? "").trim();
+  if (!id) return NextResponse.json({ error: "idが必要です" }, { status: 400 });
+
+  const r = await updatePlanEntry(id, {
+    date: body.date ? String(body.date) : null,
+    theme: body.theme ? String(body.theme) : null,
+  });
+  if (r.error) return NextResponse.json({ error: r.error }, { status: 400 });
+  return NextResponse.json({ ok: true, entry: r.entry, log: r.log });
 }
 
 // 予定の個別削除（テーマが不要な場合など）。カレンダーからも削除する。
