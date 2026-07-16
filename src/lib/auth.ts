@@ -303,6 +303,27 @@ export async function saveGoogleDoc(
   }
 }
 
+// Googleドキュメントの最新本文を取得（人がDoc上で修正した内容を承認フローで反映するために使う）
+export async function readGoogleDoc(docId: string): Promise<{ text: string; title: string } | null> {
+  const url = aiCompanyGdocUrl();
+  if (!url) return null;
+  const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(secret ? { "x-ai-company-secret": secret } : {}) },
+      body: JSON.stringify({ action: "read", docId }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null) as { ok?: boolean; text?: string; title?: string } | null;
+    if (!data?.ok || typeof data.text !== "string") return null;
+    return { text: data.text, title: data.title ?? "" };
+  } catch {
+    return null;
+  }
+}
+
 export interface UsageStatus {
   ok: boolean;
   allowed: boolean;

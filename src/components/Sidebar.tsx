@@ -6,12 +6,13 @@ import { useEffect, useState } from "react";
 import {
   Search, BarChart2, FileEdit,
   Link2, TrendingUp, Gauge, FolderOpen, Send, Newspaper,
-  LogOut, UserCircle, KeyRound, Loader2, X, Sparkles, Unlink, LineChart, CalendarDays,
+  LogOut, UserCircle, KeyRound, Loader2, X, Sparkles, Unlink, LineChart, CalendarDays, History,
 } from "lucide-react";
 
 const nav = [
   { href: "/",          label: "AIライティング",       icon: Sparkles,        color: "#34d399", hero: true },
   { href: "/calendar",  label: "執筆スケジュール",     icon: CalendarDays,    color: "#fb923c" },
+  { href: "/articles",  label: "記事履歴",             icon: History,         color: "#a78bfa" },
   { href: "/analytics", label: "分析ダッシュボード",   icon: LineChart,       color: "#facc15" },
   { href: "/media",     label: "メディア",             icon: Newspaper,       color: "var(--cyan)" },
   { href: "/analyst",   label: "アナリスト連携",       icon: Send,            color: "#34d399" },
