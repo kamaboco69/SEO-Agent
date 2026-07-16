@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Media, WorkflowStep } from "@prisma/client";
 import { generateStepOutput, type WorkflowStepKey } from "@/lib/contentWorkflow";
 import { wpPosts, wpTaxonomies } from "@/lib/wordpress";
+import { cacheGet, cacheSet } from "@/lib/cache";
 
 // 一気通貫パイプラインの各ステップを「本物のAI」で実行する。
 // ANTHROPIC_API_KEY 未設定時は contentWorkflow.ts のテンプレ生成にフォールバックする。
@@ -22,8 +23,19 @@ type StepContext = {
 };
 
 // WordPress接続済みなら、既存記事・カテゴリを「全件」取得して「不足記事の特定」「実在する内部リンク」の材料にする
-export async function fetchWpContext(media: StepContext["media"]) {
+export interface WpContext {
+  totalPublished: number;
+  existingArticles: { title: string; url: string; categories: string[] }[];
+  categories: { name: string; url: string; count: number }[];
+}
+
+// パイプラインの各ステップ（別々のサーバレス実行）から呼ばれるため、15分キャッシュで
+// WordPressへの全件取得を1回にまとめる（記事一覧はステップ間で変わらない）
+export async function fetchWpContext(media: StepContext["media"]): Promise<WpContext | null> {
   if (!media.wpUrl || !media.wpSecret) return null;
+  const cacheKey = `wpctx:${media.domain || media.wpUrl}`;
+  const hit = await cacheGet<WpContext>(cacheKey);
+  if (hit) return hit.value;
   try {
     const perPage = 100; // プラグイン側の上限
     const maxPages = 20; // 暴走防止（最大 2000 記事）
@@ -38,11 +50,13 @@ export async function fetchWpContext(media: StepContext["media"]) {
       if (!r.posts.length) break;
       all = all.concat(r.posts);
     }
-    return {
+    const ctx: WpContext = {
       totalPublished: first.total,
       existingArticles: all.map((p) => ({ title: p.title, url: p.url, categories: p.categories })),
       categories: tax.categories.map((c) => ({ name: c.name, url: c.url, count: c.count })),
     };
+    await cacheSet(cacheKey, ctx, 900);
+    return ctx;
   } catch {
     return null;
   }

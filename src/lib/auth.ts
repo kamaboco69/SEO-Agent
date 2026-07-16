@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/db";
 import { sessionCookieName } from "@/lib/authConstants";
+import { cacheGet, cacheSet } from "@/lib/cache";
 
 export { sessionCookieName };
 
@@ -369,8 +370,15 @@ export interface Entitlement {
   billingUrl: string | null;
 }
 
-// 現在ユーザーのAICompany契約状態を最新同期して返す。
-export async function getAiCompanyEntitlement(userId: string, email: string): Promise<Entitlement> {
+// 現在ユーザーのAICompany契約状態を返す。
+// パイプラインの各ステップ（run_next毎）から呼ばれAICompanyへの同期fetchが走るため、5分キャッシュする。
+// 課金画面から戻った直後の再確認など、確実に最新が必要な場面は opts.fresh=true で同期する。
+export async function getAiCompanyEntitlement(userId: string, email: string, opts?: { fresh?: boolean }): Promise<Entitlement> {
+  const cacheKey = `ent:${userId}`;
+  if (!opts?.fresh) {
+    const hit = await cacheGet<Entitlement>(cacheKey);
+    if (hit) return hit.value;
+  }
   if (process.env.AI_COMPANY_PROFILE_URL) {
     await syncAiCompanyProfileByEmail(userId, email);
   }
@@ -387,12 +395,14 @@ export async function getAiCompanyEntitlement(userId: string, email: string): Pr
   // 旧プロフィール（seoEntitled未設定）は entitled にフォールバック。
   const entitled =
     settings.seoEntitled !== undefined ? Boolean(settings.seoEntitled) : Boolean(settings.entitled);
-  return {
+  const result: Entitlement = {
     found: Boolean(profile),
     entitled,
     planName: settings.planName ?? null,
     billingUrl: settings.billingUrl ?? null,
   };
+  await cacheSet(cacheKey, result, 300);
+  return result;
 }
 
 // ── メール/パスワード認証 ──

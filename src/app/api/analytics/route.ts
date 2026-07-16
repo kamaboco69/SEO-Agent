@@ -3,9 +3,13 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { fetchMetrics, pathOf, rewriteCandidate, type DashboardRow, type GscRow, type Ga4Row } from "@/lib/analytics";
 import { wpPosts } from "@/lib/wordpress";
+import { cacheGet, cacheSet } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+// GSC/GA4は日次更新のデータなので6時間キャッシュ（「更新」ボタン=refresh=1 で最新化できる）
+const CACHE_TTL_SEC = 6 * 3600;
 
 // WordPressのタイトルに含まれるHTMLエンティティを復号
 function decodeEntities(s: string): string {
@@ -27,6 +31,16 @@ export async function GET(req: NextRequest) {
 
   const media = await prisma.media.findUnique({ where: { id: mediaId } });
   if (!media) return NextResponse.json({ error: "media not found" }, { status: 404 });
+
+  // キャッシュ（GSC/GA4取得＋WPタイトル補完が重いため）。refresh=1 で強制再取得。
+  const cacheKey = `analytics:${mediaId}:${days}`;
+  const refresh = req.nextUrl.searchParams.get("refresh") === "1";
+  if (!refresh) {
+    const hit = await cacheGet<Record<string, unknown>>(cacheKey);
+    if (hit) {
+      return NextResponse.json({ ...hit.value, fromCache: true, fetchedAt: hit.updatedAt.toISOString() });
+    }
+  }
 
   const connected = Boolean(media.gscProperty || media.wpUrl);
   const res = await fetchMetrics({
@@ -114,7 +128,7 @@ export async function GET(req: NextRequest) {
     candidateCount: candidates.length,
   };
 
-  return NextResponse.json({
+  const payload = {
     connected,
     gscConnected: Boolean(res?.gscConnected),
     ga4Connected: Boolean(res?.ga4Connected),
@@ -125,5 +139,7 @@ export async function GET(req: NextRequest) {
     rows,
     candidates: candidates.slice(0, 30),
     topQueries: queries.sort((a, b) => b.impressions - a.impressions).slice(0, 20),
-  });
+  };
+  await cacheSet(cacheKey, payload, CACHE_TTL_SEC);
+  return NextResponse.json({ ...payload, fromCache: false, fetchedAt: new Date().toISOString() });
 }

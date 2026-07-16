@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  const ent = await getAiCompanyEntitlement(user.id, user.email);
+  // 画面表示・「契約後に再確認」からの呼び出しなので常に最新を同期（キャッシュは使わない）
+  const ent = await getAiCompanyEntitlement(user.id, user.email, { fresh: true });
   // 今月のトークン使用状況（消費はしない、チェックのみ）
   const usage = await reportAiCompanyUsage(user.email);
   return NextResponse.json({

@@ -19,6 +19,8 @@ interface Row {
 interface Data {
   gscConnected: boolean; ga4Connected: boolean; property: string | null; ga4PropertyId: string | null;
   days: number;
+  fromCache?: boolean;
+  fetchedAt?: string;
   summary: { totalImpressions: number; totalClicks: number; avgPosition: number; totalViews: number; pageCount: number; candidateCount: number };
   rows: Row[];
   candidates: Row[];
@@ -47,11 +49,12 @@ export default function AnalyticsPage() {
     });
   }, []);
 
-  const load = useCallback(async () => {
+  // 通常はキャッシュ（6時間）から即表示。refresh=true（更新ボタン）でGSC/GA4から再取得。
+  const load = useCallback(async (refresh = false) => {
     if (!mediaId) return;
     setLoading(true); setMsg("");
     try {
-      const r = await fetch(`/api/analytics?mediaId=${mediaId}&days=${days}`);
+      const r = await fetch(`/api/analytics?mediaId=${mediaId}&days=${days}${refresh ? "&refresh=1" : ""}`);
       const d = await r.json();
       if (r.ok) setData(d); else setMsg(d.error ?? "取得に失敗しました");
     } finally { setLoading(false); }
@@ -136,14 +139,23 @@ export default function AnalyticsPage() {
                 style={days === d ? { background: "rgba(250,204,21,0.15)", color: "#facc15" } : { color: "var(--text-muted)" }}>{d}日</button>
             ))}
           </div>
-          <button onClick={load} disabled={loading} className="cyber-btn flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40">
+          <button onClick={() => load(true)} disabled={loading} title="キャッシュを使わず最新データを取得"
+            className="cyber-btn flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold disabled:opacity-40">
             {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            更新
           </button>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-4">
         {msg && <div className="rounded-lg px-3 py-2 text-[11px]" style={{ background: msg.startsWith("✅") ? "rgba(52,211,153,0.1)" : "rgba(248,113,113,0.1)", border: `1px solid ${msg.startsWith("✅") ? "rgba(52,211,153,0.3)" : "rgba(248,113,113,0.3)"}`, color: msg.startsWith("✅") ? "#34d399" : "#f87171" }}>{msg}</div>}
+
+        {data?.fetchedAt && (
+          <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+            データ取得: {new Date(data.fetchedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            {data.fromCache ? " 時点（キャッシュ・6時間ごと更新。右上の「更新」で最新化）" : " 時点（最新）"}
+          </p>
+        )}
 
         {/* 計測状態 / 開始 */}
         <div className="glass-static rounded-xl p-4 flex flex-wrap items-center gap-3">

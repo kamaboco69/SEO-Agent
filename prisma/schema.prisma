@@ -212,6 +212,14 @@ model ContentWorkflow {
   steps             WorkflowStep[]
 }
 
+// 汎用キャッシュ。高コストな外部取得（GSC/GA4分析・WP全記事コンテキスト・契約チェック等）の結果を保持する。
+model CacheEntry {
+  key       String   @id
+  payload   Json
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+}
+
 model WorkflowStep {
   id             String          @id @default(cuid())
   workflowId     String

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { verifyToken, verifyConfirm } from "@/lib/analytics";
 import { wpSetVerification, wpSetGa4 } from "@/lib/wordpress";
+import { cacheDelPrefix } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
         where: { id: mediaId },
         data: { gscProperty: conf.property, analyticsConnectedAt: new Date() },
       });
+      await cacheDelPrefix(`analytics:${mediaId}`); // 計測設定が変わったので古いダッシュボードキャッシュを破棄
       return NextResponse.json({ ok: true, gscProperty: updated.gscProperty });
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "計測開始に失敗しました" }, { status: 500 });
@@ -54,6 +56,7 @@ export async function POST(req: NextRequest) {
     const pid = String(body.ga4PropertyId ?? "").replace(/[^0-9]/g, "");
     if (!pid) return NextResponse.json({ error: "ga4PropertyIdが必要です" }, { status: 400 });
     const updated = await prisma.media.update({ where: { id: mediaId }, data: { ga4PropertyId: pid } });
+    await cacheDelPrefix(`analytics:${mediaId}`); // 計測設定が変わったので古いダッシュボードキャッシュを破棄
     return NextResponse.json({ ok: true, ga4PropertyId: updated.ga4PropertyId });
   }
 
