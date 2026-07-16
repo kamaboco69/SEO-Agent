@@ -4,8 +4,9 @@ import { prisma } from "@/lib/db";
 import { workflowSteps } from "@/lib/contentWorkflow";
 import { runStepWithAI } from "@/lib/aiSteps";
 import { getAiCompanyEntitlement, reportAiCompanyUsage } from "@/lib/auth";
-import { advanceWorkflow, includeWorkflow, type WorkflowFull } from "@/lib/pipelineRunner";
+import { advanceWorkflow, firstPendingStep, includeWorkflow, type WorkflowFull } from "@/lib/pipelineRunner";
 import { reconcilePlan, syncCalendarEvents, cancelPlannedEntries, markPlanDone } from "@/lib/schedulePlan";
+import { cacheDelPrefix, cacheGet, cacheSet } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -23,6 +24,16 @@ export const maxDuration = 300;
 const SOFT_BUDGET_MS = 45_000;
 const MAX_CHAIN = 40;
 const JST = 9 * 3600 * 1000;
+
+// 多重実行ロック：Cloud Schedulerの10分毎ピングと自己チェーンが同時に走っても、
+// 同じワークフローを二重に進めない。TTLは1ステップの最長（約300秒）より長くし、
+// 実行枠ごと強制終了された場合も自然に解放される。
+const LOCK_KEY = "lock:schedule-tick";
+const LOCK_TTL_SEC = 330;
+
+// 同一ステップの最大試行回数。300秒枠に収まらないステップ（超長文など）を
+// 永遠にリトライしてコストが燃え続けるのを防ぎ、超えたら「エラー」で自動実行を停止する。
+const MAX_STEP_ATTEMPTS = 4;
 
 function authorized(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -143,6 +154,27 @@ async function chainNext(req: NextRequest, depth: number) {
 async function runTick(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // 実行中の別tick（長いステップ処理中など）があればスキップ（次のピングで再試行される）
+  const lock = await cacheGet<{ t: number }>(LOCK_KEY);
+  if (lock) return NextResponse.json({ ok: true, skipped: "already_running", lockedAt: new Date(lock.value.t).toISOString() });
+  await cacheSet(LOCK_KEY, { t: Date.now() }, LOCK_TTL_SEC);
+
+  let result: { payload: Record<string, unknown>; needChain: boolean; chain: number };
+  try {
+    result = await runTickBody(req);
+  } finally {
+    // チェーン先の新しい実行がロックに阻まれないよう、必ず解放してから発火する
+    await cacheDelPrefix(LOCK_KEY);
+  }
+  let chained = false;
+  if (result.needChain) {
+    await chainNext(req, result.chain);
+    chained = true;
+  }
+  return NextResponse.json({ ...result.payload, chained });
+}
+
+async function runTickBody(req: NextRequest) {
   const started = Date.now();
   const chain = Number(req.nextUrl.searchParams.get("chain") ?? 0);
   const forceMediaId = req.nextUrl.searchParams.get("force"); // 検証・手動実行用：予定日を無視して直近の予定を即実行
@@ -213,6 +245,20 @@ async function runTick(req: NextRequest) {
         needMore = true;
         break;
       }
+
+      // 同一ステップの試行回数ガード：実行枠（300秒）に収まらないステップを永遠にリトライしない。
+      // 上限に達したら「エラー」にして自動実行を止める（記事履歴から手動の承認で再開できる）。
+      const nextKey = firstPendingStep(wf)?.key ?? "wp_save";
+      const attemptKey = `attempt:${wf.id}:${nextKey}`;
+      const attempts = (await cacheGet<{ n: number }>(attemptKey))?.value.n ?? 0;
+      if (attempts >= MAX_STEP_ATTEMPTS) {
+        await prisma.contentWorkflow.update({ where: { id: wf.id }, data: { status: "error" } });
+        await prisma.scheduledArticle.updateMany({ where: { workflowId: wf.id }, data: { status: "failed" } });
+        log.push(`「${wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id}」: ステップ「${nextKey}」が${attempts}回完了しなかったため自動実行を停止しました（文字数が大きすぎる可能性。記事履歴から確認できます）`);
+        break;
+      }
+      await cacheSet(attemptKey, { n: attempts + 1 }, 24 * 3600);
+
       const adv = await advanceWorkflow(wf, email);
       if (adv.aiError) {
         // 残高不足など。ここで止めて次回cronでリトライ（無限チェーンはしない）
@@ -220,6 +266,7 @@ async function runTick(req: NextRequest) {
         hadAiError = true;
         break;
       }
+      await cacheDelPrefix(attemptKey); // ステップ完了→試行カウンタをクリア
       advancedSteps += 1;
       wf = adv.workflow;
       if (adv.finished) {
@@ -232,23 +279,20 @@ async function runTick(req: NextRequest) {
     if (needMore) break;
   }
 
-  // 3) 時間切れで残作業があれば自己チェーンで継続（AIエラー時は翌cronまで待つ）
-  let chained = false;
-  if (needMore && !hadAiError && chain < MAX_CHAIN) {
-    await chainNext(req, chain);
-    chained = true;
-  }
-
-  return NextResponse.json({
-    ok: true,
+  // 3) 時間切れで残作業があれば自己チェーンで継続（発火はロック解放後に呼び出し元が行う）
+  return {
+    needChain: needMore && !hadAiError && chain < MAX_CHAIN,
     chain,
-    started: due.length,
-    advancedSteps,
-    finished,
-    chained,
-    log,
-    elapsedSec: Math.round((Date.now() - started) / 1000),
-  });
+    payload: {
+      ok: true,
+      chain,
+      started: due.length,
+      advancedSteps,
+      finished,
+      log,
+      elapsedSec: Math.round((Date.now() - started) / 1000),
+    },
+  };
 }
 
 export async function GET(req: NextRequest) {

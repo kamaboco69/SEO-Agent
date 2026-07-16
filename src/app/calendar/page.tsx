@@ -464,12 +464,13 @@ export default function CalendarPage() {
                         const color = colorOf(e.mediaId);
                         const done = e.status === "done";
                         const generating = e.status === "generating";
+                        const failed = e.status === "failed";
                         const link = e.workflow?.wpEditLink ?? e.workflow?.gdocUrl ?? null;
                         return (
                           <div key={e.id}
                             onClick={e.status === "planned" ? () => openEdit(e) : undefined}
                             className={`group rounded-md px-1.5 py-1 text-[9px] leading-tight ${e.status === "planned" ? "cursor-pointer transition-colors hover:brightness-125" : ""}`}
-                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : "予定（クリックで編集）"}${e.wordCount ? `\n目標文字数: ${e.wordCount.toLocaleString()}字` : ""}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
+                            title={`${e.mediaName}\n${e.theme}\n状態: ${done ? "完了" : generating ? "生成中" : failed ? "エラー（自動停止・記事履歴から確認）" : "予定（クリックで編集）"}${e.wordCount ? `\n目標文字数: ${e.wordCount.toLocaleString()}字` : ""}${e.source === "manual" ? "\n手動で日付指定した予定" : ""}${e.calendarSynced ? "\nAI秘書カレンダー登録済み" : ""}`}
                             style={{
                               background: done ? `${color}22` : "rgba(4,10,30,0.5)",
                               border: `1px solid ${color}${done ? "88" : editEntry?.id === e.id ? "aa" : "44"}`,
@@ -478,6 +479,7 @@ export default function CalendarPage() {
                             <div className="flex items-center gap-1">
                               {done ? <CheckCircle2 size={9} style={{ color }} className="shrink-0" />
                                 : generating ? <PenLine size={9} style={{ color: "#facc15" }} className="shrink-0" />
+                                : failed ? <X size={9} style={{ color: "#f87171" }} className="shrink-0" />
                                 : <Clock size={9} style={{ color }} className="shrink-0" />}
                               <span className="font-bold truncate" style={{ color }}>{e.mediaName}</span>
                               {e.source === "manual" && <Pin size={8} style={{ color: "#fb923c" }} className="shrink-0" />}

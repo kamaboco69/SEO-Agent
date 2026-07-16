@@ -37,6 +37,7 @@ const FILTERS = [
 ] as const;
 
 function statusOf(a: ArticleRow): { label: string; color: string } {
+  if (a.status === "error") return { label: "エラー（自動停止）", color: "#f87171" };
   if (a.status === "in_progress") return { label: "生成中", color: "#facc15" };
   if (a.wpPublished) return { label: "WP公開済み", color: "#34d399" };
   if (a.wpPostId) return { label: "WP下書き", color: "#38bdf8" };

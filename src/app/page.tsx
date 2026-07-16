@@ -110,6 +110,7 @@ const HISTORY_STATUS: Record<string, string> = {
   awaiting_approval_1: "承認待ち(執筆)",
   awaiting_approval_2: "承認待ち(公開前)",
   completed: "完了",
+  error: "エラー（自動停止）",
 };
 
 export default function PipelinePage() {
