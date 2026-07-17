@@ -30,6 +30,11 @@ export function workflowSnapshot(wf: WorkflowFull) {
   return {
     id: wf.id,
     status: wf.status,
+    // 工程チェックリスト（LIFFの進捗フロー表示用）
+    steps: workflowSteps.map((s) => {
+      const st = wf.steps.find((x) => x.key === s.key);
+      return { key: s.key, label: s.label, done: Boolean(st && hasOutput(st)) };
+    }),
     wpPublished: wf.wpPublished,
     title: wf.finalArticleTitle ?? wf.selectedArticle ?? wf.targetTheme ?? "記事",
     mediaId: wf.mediaId,
