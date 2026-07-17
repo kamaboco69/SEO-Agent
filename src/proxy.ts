@@ -5,7 +5,8 @@ import { sessionCookieName } from "@/lib/authConstants";
 // これを塞ぐと iframe 埋め込みのワンタイムSSOが /login に飛ばされ、永久にログイン状態にならない。
 // /api/wp/ は WordPress プラグインからの未認証リクエスト（自動登録）。所有確認はエンドポイント内でdiagコールバックにより担保。
 // /api/schedule/tick は Vercel Cron からの呼び出し。CRON_SECRET による認可をエンドポイント内で行う。
-const PUBLIC_PATHS = ["/login", "/sso", "/api/sso/", "/api/wp/", "/api/auth/", "/api/analyst/recommendations", "/api/schedule/tick"];
+// /api/agent/ は AI Company サーバー間ブリッジ。HMACトークン（Bearer）による認可をエンドポイント内で行う。
+const PUBLIC_PATHS = ["/login", "/sso", "/api/sso/", "/api/wp/", "/api/auth/", "/api/analyst/recommendations", "/api/schedule/tick", "/api/agent/"];
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
