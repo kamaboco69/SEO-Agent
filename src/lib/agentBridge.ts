@@ -49,6 +49,33 @@ export function workflowSnapshot(wf: WorkflowFull) {
   };
 }
 
+// 記事完成時にAI Companyへ通知し、LINEの承認カード（✅WordPressへ公開 等）を届けてもらう。
+// 自動スケジュール実行・自動再開（tick）で完成した記事用（LIFF起動の執筆はAI Company側が自前で送る）。
+// WordPress接続メディアの記事のみ（公開ボタンが意味を持つため）。二重送信はキャッシュで防止。
+export async function notifyArticleReadyToLine(wf: WorkflowFull): Promise<void> {
+  try {
+    if (!wf.media?.wpUrl || wf.wpPublished) return;
+    const email = wf.ownerEmail ?? wf.media?.scheduleOwnerEmail;
+    const profile = process.env.AI_COMPANY_PROFILE_URL;
+    const secret = process.env.AI_COMPANY_WEBHOOK_SECRET;
+    if (!email || !profile || !secret) return;
+
+    const { cacheGet, cacheSet } = await import("@/lib/cache");
+    const key = `linecard:${wf.id}`;
+    if (await cacheGet(key)) return; // 送信済み
+    await cacheSet(key, { t: Date.now() }, 30 * 24 * 3600);
+
+    await fetch(profile.replace(/\/profile.*$/, "/notify"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-ai-company-secret": secret },
+      body: JSON.stringify({ email, snap: workflowSnapshot(wf) }),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    /* 通知失敗は本処理に影響させない（記事自体は完成済み） */
+  }
+}
+
 // メディア指定の執筆ワークフロー開始（/api/pipeline POST のブリッジ版・メディア分析まで実行）
 export async function startMediaWorkflow(
   email: string,

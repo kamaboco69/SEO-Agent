@@ -6,6 +6,7 @@ import { runStepWithAI } from "@/lib/aiSteps";
 import { getAiCompanyEntitlement, reportAiCompanyUsage } from "@/lib/auth";
 import { advanceWorkflow, firstPendingStep, includeWorkflow, type WorkflowFull } from "@/lib/pipelineRunner";
 import { reconcilePlan, syncCalendarEvents, cancelPlannedEntries, markPlanDone } from "@/lib/schedulePlan";
+import { notifyArticleReadyToLine } from "@/lib/agentBridge";
 import { cacheDelPrefix, cacheGet, cacheSet } from "@/lib/cache";
 
 export const dynamic = "force-dynamic";
@@ -289,6 +290,7 @@ async function runTickBody(req: NextRequest) {
       wf = adv.workflow;
       if (adv.finished) {
         await markPlanDone(wf.id);
+        await notifyArticleReadyToLine(wf); // LINEへ承認カード（✅WordPressへ公開）を届ける
         finished.push(wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id);
         log.push(`「${wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id}」: 完成`);
         break;
