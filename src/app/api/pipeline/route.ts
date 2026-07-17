@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
       data: {
         clientName,
         clientSite,
+        ownerEmail: email,
         instruction: freeInstruction,
         targetTheme: theme,
         targetWordCount,
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest) {
   const workflow = await prisma.contentWorkflow.create({
     data: {
       mediaId,
+      ownerEmail: email,
       instruction,
       targetTheme: recommended ?? targetTheme,
       targetWordCount,
@@ -173,6 +175,16 @@ export async function PATCH(req: NextRequest) {
 
   const workflow = await prisma.contentWorkflow.findUnique({ where: { id: workflowId }, include: includeWorkflow() });
   if (!workflow) return NextResponse.json({ error: "workflow not found" }, { status: 404 });
+
+  // 作業停止：サーバーに「停止中」を記録し、cronの自動再開の対象から外す
+  //（再開は run_next がそのまま実行して状態を上書きするため、専用アクションは不要）
+  if (action === "pause") {
+    if (workflow.status !== "in_progress") return NextResponse.json(workflow);
+    const paused = await prisma.contentWorkflow.update({
+      where: { id: workflowId }, data: { status: "paused" }, include: includeWorkflow(),
+    });
+    return NextResponse.json(paused);
+  }
 
   // WordPress 下書き保存 / 公開（手動トリガー。全自動フローでは run_next が自動保存する）
   if (action === "wp_draft" || action === "wp_publish") {

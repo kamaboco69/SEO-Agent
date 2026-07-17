@@ -108,6 +108,7 @@ async function startEntry(entry: ScheduledArticle & { media: Media }, log: strin
     data: {
       mediaId: media.id,
       origin: "schedule",
+      ownerEmail: owner.email,
       instruction,
       targetTheme: entry.theme,
       targetWordCount,
@@ -136,11 +137,12 @@ async function startEntry(entry: ScheduledArticle & { media: Media }, log: strin
 }
 
 // 続きがあるとき、自分自身を叩いて新しい実行時間枠で継続する（応答は待たずに切る）
-async function chainNext(req: NextRequest, depth: number) {
+async function chainNext(req: NextRequest, depth: number, resumeHint?: string | null) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
   try {
-    await fetch(`${baseUrl(req)}/api/schedule/tick?chain=${depth + 1}`, {
+    const resume = resumeHint ? `&resume=${encodeURIComponent(resumeHint)}` : "";
+    await fetch(`${baseUrl(req)}/api/schedule/tick?chain=${depth + 1}${resume}`, {
       headers: { "x-cron-secret": process.env.CRON_SECRET ?? "" },
       signal: ctrl.signal,
     });
@@ -159,7 +161,7 @@ async function runTick(req: NextRequest) {
   if (lock) return NextResponse.json({ ok: true, skipped: "already_running", lockedAt: new Date(lock.value.t).toISOString() });
   await cacheSet(LOCK_KEY, { t: Date.now() }, LOCK_TTL_SEC);
 
-  let result: { payload: Record<string, unknown>; needChain: boolean; chain: number };
+  let result: { payload: Record<string, unknown>; needChain: boolean; chain: number; resumeHint: string | null };
   try {
     result = await runTickBody(req);
   } finally {
@@ -168,7 +170,7 @@ async function runTick(req: NextRequest) {
   }
   let chained = false;
   if (result.needChain) {
-    await chainNext(req, result.chain);
+    await chainNext(req, result.chain, result.resumeHint);
     chained = true;
   }
   return NextResponse.json({ ...result.payload, chained });
@@ -230,19 +232,35 @@ async function runTickBody(req: NextRequest) {
     if (forceMediaId) break; // 手動実行は1件だけ
   }
 
-  // 2) 進行中のスケジュール記事を進める（古い順）
+  // 2) 進行中の記事を進める（古い順）。
+  // スケジュール記事は常に対象。手動・フリー執筆の記事も「8分以上更新がない」＝
+  // ブラウザが閉じられた/接続が切れた等で置き去りになったものは自動再開して完走させる
+  //（実行中のブラウザは各ステップごとに更新するため誤って二重駆動しない。
+  //   ユーザーが「作業停止」した記事は status=paused なので対象外）。
+  // resume=<id> は自己チェーンからの継続ヒント（直前まで進めていた記事は更新が新しくても続行）。
+  const resumeId = req.nextUrl.searchParams.get("resume");
+  const staleBefore = new Date(Date.now() - 8 * 60_000);
   const pending = await prisma.contentWorkflow.findMany({
-    where: { origin: "schedule", status: "in_progress" },
+    where: {
+      status: "in_progress",
+      OR: [
+        { origin: "schedule" },
+        ...(resumeId ? [{ id: resumeId }] : []),
+        { updatedAt: { lt: staleBefore } },
+      ],
+    },
     orderBy: { updatedAt: "asc" },
     include: includeWorkflow(),
   });
 
+  let resumeHint: string | null = null;
   for (let wf of pending as WorkflowFull[]) {
-    const email = wf.media?.scheduleOwnerEmail ?? null;
+    const email = wf.ownerEmail ?? wf.media?.scheduleOwnerEmail ?? null;
     for (;;) {
       // ステップ開始前に残り時間を確認（開始後の長時間ステップでmaxDurationを超えないため）
       if (overBudget()) {
         needMore = true;
+        resumeHint = wf.id; // チェーン先で年齢フィルタに関係なくこの記事から続行する
         break;
       }
 
@@ -272,7 +290,7 @@ async function runTickBody(req: NextRequest) {
       if (adv.finished) {
         await markPlanDone(wf.id);
         finished.push(wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id);
-        log.push(`「${wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id}」: 完成（WordPress下書き保存まで完了）`);
+        log.push(`「${wf.finalArticleTitle ?? wf.selectedArticle ?? wf.id}」: 完成`);
         break;
       }
     }
@@ -283,6 +301,7 @@ async function runTickBody(req: NextRequest) {
   return {
     needChain: needMore && !hadAiError && chain < MAX_CHAIN,
     chain,
+    resumeHint,
     payload: {
       ok: true,
       chain,

@@ -187,6 +187,7 @@ model ContentWorkflow {
   clientName        String?
   clientSite        String?
   origin            String   @default("manual")
+  ownerEmail        String?  // 実行を開始したユーザー（サーバー側自動再開時のトークン計上先）
   instruction       String
   targetTheme       String?
   targetWordCount   Int?

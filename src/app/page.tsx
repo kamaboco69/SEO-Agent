@@ -111,6 +111,7 @@ const HISTORY_STATUS: Record<string, string> = {
   awaiting_approval_2: "承認待ち(公開前)",
   completed: "完了",
   error: "エラー（自動停止）",
+  paused: "停止中",
 };
 
 export default function PipelinePage() {
@@ -302,20 +303,31 @@ export default function PipelinePage() {
     return wf;
   }
 
-  // 作業停止：ステップ間で中断し、実行中のリクエストを打ち切る（サーバ側の現ステップは完了扱いになる場合あり）
+  // 作業停止：ステップ間で中断し、実行中のリクエストを打ち切る（サーバ側の現ステップは完了扱いになる場合あり）。
+  // サーバーにも「停止中(paused)」を記録し、cronの自動再開の対象から外す。
   function stopWork() {
     stopRef.current = true;
     abortRef.current?.abort();
     setRunning(false);
+    if (workflow) {
+      fetch("/api/pipeline", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflowId: workflow.id, action: "pause" }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((wf) => { if (wf) setWorkflow(wf); })
+        .catch(() => {});
+    }
   }
 
-  // 停止したワークフローを再開
+  // 停止したワークフローを再開（paused はローカルで in_progress 扱いにして駆動を開始する）
   async function resumeWork() {
     if (!workflow || running) return;
     stopRef.current = false;
     setPipelineError(null);
     setRunning(true);
-    try { await drive(workflow); } finally { setRunning(false); }
+    try { await drive({ ...workflow, status: "in_progress" }); } finally { setRunning(false); }
   }
 
   async function runPipeline() {
@@ -1013,14 +1025,18 @@ function StatusBanner({ workflow, running, onWp, onReject, onCancel, onStop, onR
 }) {
   const s = workflow.status;
 
-  if (s === "in_progress") {
+  if (s === "in_progress" || s === "paused") {
     return (
       <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ background: running ? "rgba(56,189,248,0.08)" : "rgba(251,146,60,0.08)", border: `1px solid ${running ? "rgba(56,189,248,0.25)" : "rgba(251,146,60,0.3)"}` }}>
         {running ? <Loader2 size={15} className="animate-spin shrink-0" style={{ color: "var(--blue)" }} /> : <Square size={14} className="shrink-0" style={{ color: "#fb923c" }} />}
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-bold" style={{ color: running ? "var(--blue)" : "#fb923c" }}>{running ? "AIが自動生成中…" : "作業を停止しました"}</p>
+          <p className="text-xs font-bold" style={{ color: running ? "var(--blue)" : "#fb923c" }}>{running ? "AIが自動生成中…" : s === "paused" ? "作業を停止しました" : "生成が中断されています"}</p>
           <p className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-            {running ? "分析→執筆→画像生成→WordPress下書き保存まで自動で進みます（1〜3分）" : "途中まで生成済みです。「再開」で続きから実行、または削除できます。"}
+            {running
+              ? "分析→執筆→画像生成→WordPress下書き保存まで自動で進みます（1〜3分）"
+              : s === "paused"
+                ? "停止中は自動再開されません。「再開」で続きから実行、または削除できます。"
+                : "このままでも約10分以内にサーバー側で自動再開して完走します。「再開」で今すぐ続きから実行もできます。"}
           </p>
         </div>
         {running ? (

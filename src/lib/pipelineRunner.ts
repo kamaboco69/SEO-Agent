@@ -185,7 +185,8 @@ export async function advanceWorkflow(
     const updated = await prisma.contentWorkflow.update({
       where: { id: workflowId },
       data: {
-        status: computeStatus(re!),
+        // ステップ実行中にユーザーが「作業停止」した場合は paused を保持する（勝手に再開させない）
+        status: re!.status === "paused" ? "paused" : computeStatus(re!),
         currentStep: nextStep.key,
         ...(isDraft ? { finalArticleTitle: (output as { title?: string }).title ?? null, finalArticle: (output as { body?: string }).body ?? null, ...gdocData } : {}),
       },
