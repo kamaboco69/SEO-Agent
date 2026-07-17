@@ -545,9 +545,14 @@ ${markdown}
 # 出力
 上記Markdownを装飾済みHTML(body内に貼る形)へ変換し、HTMLだけを出力してください。見出し・表・箇条書き・重要箇所の装飾を活かし、本文は省略しないこと。`;
 
+  // サーバレスの実行上限は300秒。長文の装飾をSonnetで行うと枠に収まらない
+  // （10,000字の記事で約290秒の実測＝タイムアウトと紙一重）ため、本文が長い場合は
+  // 高速なHaikuで整形する。装飾は機械的なMarkdown→HTML変換なので品質差は小さい。
+  const swellModel = markdown.length >= 8000 ? RESEARCH_MODEL : WRITING_MODEL;
+
   try {
     const stream = client.messages.stream({
-      model: WRITING_MODEL,
+      model: swellModel,
       max_tokens: 32000, // 装飾HTML(インラインCSS)は冗長なので大きめ。streamなので大kも可
       system,
       messages: [{ role: "user", content: user }],
@@ -558,7 +563,7 @@ ${markdown}
       .map((c) => c.text)
       .join("");
     const usage: StepUsage = {
-      model: WRITING_MODEL,
+      model: swellModel,
       provider: "anthropic",
       inputTokens: final.usage?.input_tokens ?? 0,
       outputTokens: final.usage?.output_tokens ?? 0,
