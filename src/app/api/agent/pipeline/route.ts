@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { agentEmail, startMediaWorkflow, workflowSnapshot } from "@/lib/agentBridge";
 import { advanceWorkflow, aiErrorMessage, includeWorkflow } from "@/lib/pipelineRunner";
+import { syncWpPublished } from "@/lib/wpPublishSync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 記事執筆ステップ（ストリーミング）に余裕を持たせる
@@ -14,16 +15,30 @@ export async function GET(req: NextRequest) {
   if (!agentEmail(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const id = req.nextUrl.searchParams.get("id");
   if (id) {
-    const wf = await prisma.contentWorkflow.findUnique({ where: { id }, include: includeWorkflow() });
+    let wf = await prisma.contentWorkflow.findUnique({ where: { id }, include: includeWorkflow() });
     if (!wf) return NextResponse.json({ error: "not found" }, { status: 404 });
+    // WP管理画面から直接公開された場合もラベルが「公開済み」になるよう実状態を同期
+    const synced = await syncWpPublished([wf]);
+    if (synced.has(wf.id)) {
+      wf = (await prisma.contentWorkflow.findUnique({ where: { id }, include: includeWorkflow() })) ?? wf;
+    }
     return NextResponse.json(workflowSnapshot(wf));
   }
-  const rows = await prisma.contentWorkflow.findMany({
+  let rows = await prisma.contentWorkflow.findMany({
     where: { mediaId: { not: null } },
     orderBy: { updatedAt: "desc" },
     take: 8,
     include: includeWorkflow(),
   });
+  const synced = await syncWpPublished(rows);
+  if (synced.size > 0) {
+    rows = await prisma.contentWorkflow.findMany({
+      where: { mediaId: { not: null } },
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+      include: includeWorkflow(),
+    });
+  }
   return NextResponse.json({ workflows: rows.map(workflowSnapshot) });
 }
 
