@@ -24,18 +24,22 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json(workflowSnapshot(wf));
   }
+  // mediaId指定でそのメディアの記事だけに絞り込める（LIFFのメディア切替表示用）。
+  // 未指定は全メディア横断。クライアント側フィルタでも成立するよう多めに返す。
+  const mediaId = req.nextUrl.searchParams.get("mediaId");
+  const where = mediaId ? { mediaId } : { mediaId: { not: null } };
   let rows = await prisma.contentWorkflow.findMany({
-    where: { mediaId: { not: null } },
+    where,
     orderBy: { updatedAt: "desc" },
-    take: 8,
+    take: 24,
     include: includeWorkflow(),
   });
   const synced = await syncWpPublished(rows);
   if (synced.size > 0) {
     rows = await prisma.contentWorkflow.findMany({
-      where: { mediaId: { not: null } },
+      where,
       orderBy: { updatedAt: "desc" },
-      take: 8,
+      take: 24,
       include: includeWorkflow(),
     });
   }
